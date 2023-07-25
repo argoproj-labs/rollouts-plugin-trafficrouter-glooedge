@@ -38,11 +38,12 @@ type virtualServiceClient struct {
 }
 
 type RouteTableReader interface {
-	GetRouteTable(ctx context.Context, name string, namespace string) *gloov1.RouteTable
+	GetRouteTable(ctx context.Context, name string, namespace string) (*gloov1.RouteTable, error)
+	ListRouteTables(ctx context.Context, opts *k8sclient.ListOptions) ([]*gloov1.RouteTable, error)
 }
 
 type RouteTableWriter interface {
-	PatchRouteTable(ctx context.Context, obj *gloov1.RouteTable, patch k8sclient.Patch, opts ...k8sclient.PatchOption) *gloov1.RouteTable
+	PatchRouteTable(ctx context.Context, obj *gloov1.RouteTable, patch k8sclient.Patch, opts ...k8sclient.PatchOption) error
 }
 
 type VirtualServiceReader interface {
@@ -87,11 +88,15 @@ func (c glooV1Client) VirtualServices() VirtualServiceClient {
 	return c.vsClient
 }
 
-func (c routeTableClient) GetRouteTable(ctx context.Context, name string, namespace string) *gloov1.RouteTable {
+func (c routeTableClient) GetRouteTable(ctx context.Context, name string, namespace string) (*gloov1.RouteTable, error) {
 	panic("not impl")
 }
 
-func (c routeTableClient) PatchRouteTable(ctx context.Context, obj *gloov1.RouteTable, patch k8sclient.Patch, opts ...k8sclient.PatchOption) *gloov1.RouteTable {
+func (c routeTableClient) ListRouteTables(ctx context.Context, opts *k8sclient.ListOptions) ([]*gloov1.RouteTable, error) {
+	panic("not impl")
+}
+
+func (c routeTableClient) PatchRouteTable(ctx context.Context, obj *gloov1.RouteTable, patch k8sclient.Patch, opts ...k8sclient.PatchOption) error {
 	panic("not impl")
 }
 

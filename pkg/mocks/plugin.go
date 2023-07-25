@@ -32,7 +32,7 @@ type GlooMockClient struct {
 }
 
 func (c GlooMockClient) RouteTables() gloo.RouteTableClient {
-	panic("not impl")
+	return c.rtClient
 }
 
 func (c GlooMockClient) VirtualServices() gloo.VirtualServiceClient {
@@ -42,11 +42,15 @@ func (c GlooMockClient) VirtualServices() gloo.VirtualServiceClient {
 type glooMockRouteTableClient struct {
 }
 
-func (c glooMockRouteTableClient) GetRouteTable(ctx context.Context, name string, namespace string) *gloov1.RouteTable {
+func (c glooMockRouteTableClient) GetRouteTable(ctx context.Context, name string, namespace string) (*gloov1.RouteTable, error) {
 	panic("not impl")
 }
 
-func (c glooMockRouteTableClient) PatchRouteTable(ctx context.Context, obj *gloov1.RouteTable, patch k8sclient.Patch, opts ...k8sclient.PatchOption) *gloov1.RouteTable {
+func (c glooMockRouteTableClient) ListRouteTables(ctx context.Context, opts *k8sclient.ListOptions) ([]*gloov1.RouteTable, error) {
+	panic("not impl")
+}
+
+func (c glooMockRouteTableClient) PatchRouteTable(ctx context.Context, obj *gloov1.RouteTable, patch k8sclient.Patch, opts ...k8sclient.PatchOption) error {
 	panic("not impl")
 }
 
