@@ -1,57 +1,13 @@
 package gloo
 
 import (
-	"context"
-
 	"github.com/argoproj-labs/rollouts-plugin-trafficrouter-glooedge/util"
 	gloov1 "github.com/solo-io/solo-apis/pkg/api/gateway.solo.io/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-type glooV1Client struct {
-	rtClient *routeTableClient
-	vsClient *virtualServiceClient
-}
-
 type GlooV1ClientSet interface {
-	RouteTables() RouteTableClient
-	VirtualServices() VirtualServiceClient
-}
-
-type RouteTableClient interface {
-	RouteTableReader
-	RouteTableWriter
-}
-
-type routeTableClient struct {
-	client k8sclient.Client
-}
-
-type VirtualServiceClient interface {
-	VirtualServiceReader
-	VirtualServiceWriter
-}
-
-type virtualServiceClient struct {
-	client k8sclient.Client
-}
-
-type RouteTableReader interface {
-	GetRouteTable(ctx context.Context, name string, namespace string) (*gloov1.RouteTable, error)
-	ListRouteTables(ctx context.Context, opts *k8sclient.ListOptions) ([]*gloov1.RouteTable, error)
-}
-
-type RouteTableWriter interface {
-	PatchRouteTable(ctx context.Context, obj *gloov1.RouteTable, patch k8sclient.Patch, opts ...k8sclient.PatchOption) error
-}
-
-type VirtualServiceReader interface {
-	GetVirtualService(ctx context.Context, name string, namespace string) *gloov1.VirtualService
-}
-
-type VirtualServiceWriter interface {
-	PatchVirtualService(ctx context.Context, obj *gloov1.VirtualService, patch k8sclient.Patch, opts ...k8sclient.PatchOption) *gloov1.VirtualService
+	RouteTables() gloov1.RouteTableClient
+	VirtualServices() gloov1.VirtualServiceClient
 }
 
 func NewGlooV1ClientSet() (GlooV1ClientSet, error) {
@@ -60,50 +16,10 @@ func NewGlooV1ClientSet() (GlooV1ClientSet, error) {
 		return nil, err
 	}
 
-	scheme := runtime.NewScheme()
-	gloov1.AddToScheme(scheme)
-
-	c, err := k8sclient.New(cfg, k8sclient.Options{
-		Scheme: scheme,
-	})
+	clientset, err := gloov1.NewClientsetFromConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	return glooV1Client{
-		rtClient: &routeTableClient{
-			client: c,
-		},
-		vsClient: &virtualServiceClient{
-			client: c,
-		},
-	}, nil
-}
-
-func (c glooV1Client) RouteTables() RouteTableClient {
-	return c.rtClient
-}
-
-func (c glooV1Client) VirtualServices() VirtualServiceClient {
-	return c.vsClient
-}
-
-func (c routeTableClient) GetRouteTable(ctx context.Context, name string, namespace string) (*gloov1.RouteTable, error) {
-	panic("not impl")
-}
-
-func (c routeTableClient) ListRouteTables(ctx context.Context, opts *k8sclient.ListOptions) ([]*gloov1.RouteTable, error) {
-	panic("not impl")
-}
-
-func (c routeTableClient) PatchRouteTable(ctx context.Context, obj *gloov1.RouteTable, patch k8sclient.Patch, opts ...k8sclient.PatchOption) error {
-	panic("not impl")
-}
-
-func (c virtualServiceClient) GetVirtualService(ctx context.Context, name string, namespace string) *gloov1.VirtualService {
-	panic("not impl")
-}
-
-func (c virtualServiceClient) PatchVirtualService(ctx context.Context, obj *gloov1.VirtualService, patch k8sclient.Patch, opts ...k8sclient.PatchOption) *gloov1.VirtualService {
-	panic("not impl")
+	return clientset, nil
 }

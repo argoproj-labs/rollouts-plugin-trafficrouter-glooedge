@@ -12,6 +12,7 @@ import (
 	"github.com/sirupsen/logrus"
 	gloov1 "github.com/solo-io/solo-apis/pkg/api/gateway.solo.io/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -28,7 +29,8 @@ type RpcPlugin struct {
 }
 
 type GlooEdgeTrafficRouting struct {
-	RouteTableSelector *DumbObjectSelector `json:"routeTableSelector" protobuf:"bytes,1,name=routeTableSelector"`
+	RouteTableSelector     *DumbObjectSelector `json:"routeTableSelector" protobuf:"bytes,1,name=routeTableSelector"`
+	VirtualServiceSelector *DumbObjectSelector `json:"routeTableSelector" protobuf:"bytes,1,name=routeTableSelector"`
 }
 
 type DumbObjectSelector struct {
@@ -67,6 +69,7 @@ func (r *RpcPlugin) UpdateHash(rollout *v1alpha1.Rollout, canaryHash, stableHash
 }
 
 func (r *RpcPlugin) SetWeight(rollout *v1alpha1.Rollout, desiredWeight int32, additionalDestinations []v1alpha1.WeightDestination) pluginTypes.RpcError {
+	// TODO: check rollout type
 	ctx := context.TODO()
 	glooPluginConfig, err := getPluginConfig(rollout)
 	if err != nil {
@@ -76,7 +79,12 @@ func (r *RpcPlugin) SetWeight(rollout *v1alpha1.Rollout, desiredWeight int32, ad
 	}
 
 	if rollout.Spec.Strategy.Canary != nil {
-		return r.handleCanary(ctx, rollout, desiredWeight, additionalDestinations, glooPluginConfig)
+		err = r.handleCanary(ctx, rollout, desiredWeight, additionalDestinations, glooPluginConfig)
+		if err != nil {
+			return pluginTypes.RpcError{
+				ErrorString: fmt.Sprintf("failed canary rollout: %s", err),
+			}
+		}
 	} else if rollout.Spec.Strategy.BlueGreen != nil {
 		return r.handleBlueGreen(rollout, glooPluginConfig)
 	}
@@ -130,7 +138,8 @@ func (r *RpcPlugin) getRouteTables(ctx context.Context, rollout *v1alpha1.Rollou
 
 	if !strings.EqualFold(pluginConfig.RouteTableSelector.Name, "") {
 		r.LogCtx.Debugf("getRouteTables using ns:name ref %s:%s to get single table", pluginConfig.RouteTableSelector.Name, pluginConfig.RouteTableSelector.Namespace)
-		result, err := r.Client.RouteTables().GetRouteTable(ctx, pluginConfig.RouteTableSelector.Name, pluginConfig.RouteTableSelector.Namespace)
+		result, err := r.Client.RouteTables().GetRouteTable(ctx,
+			client.ObjectKey{Namespace: pluginConfig.RouteTableSelector.Namespace, Name: pluginConfig.RouteTableSelector.Name})
 		if err != nil {
 			return nil, err
 		}
@@ -150,11 +159,15 @@ func (r *RpcPlugin) getRouteTables(ctx context.Context, rollout *v1alpha1.Rollou
 		r.LogCtx.Debugf("getRouteTables listing tables with opts %+v", opts)
 		var err error
 
-		rts, err = r.Client.RouteTables().ListRouteTables(ctx, opts)
+		rtl, err := r.Client.RouteTables().ListRouteTable(ctx, opts)
 		if err != nil {
 			return nil, err
 		}
 		r.LogCtx.Debugf("getRouteTables listing tables with opts %+v; found %d routeTables", opts, len(rts))
+
+		for i := range rtl.Items {
+			rts = append(rts, &rtl.Items[i])
+		}
 	}
 
 	matched := []*GlooMatchedRouteTable{}
