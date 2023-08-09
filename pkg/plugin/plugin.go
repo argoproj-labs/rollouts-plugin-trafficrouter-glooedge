@@ -12,7 +12,6 @@ import (
 	"github.com/sirupsen/logrus"
 	gloov1 "github.com/solo-io/solo-apis/pkg/api/gateway.solo.io/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -144,7 +143,7 @@ func (r *RpcPlugin) getRouteTables(ctx context.Context, rollout *v1alpha1.Rollou
 	if !strings.EqualFold(pluginConfig.RouteTableSelector.Name, "") {
 		r.LogCtx.Debugf("getRouteTables using ns:name ref %s:%s to get single table", pluginConfig.RouteTableSelector.Name, pluginConfig.RouteTableSelector.Namespace)
 		result, err := r.Client.RouteTables().GetRouteTable(ctx,
-			client.ObjectKey{Namespace: pluginConfig.RouteTableSelector.Namespace, Name: pluginConfig.RouteTableSelector.Name})
+			k8sclient.ObjectKey{Namespace: pluginConfig.RouteTableSelector.Namespace, Name: pluginConfig.RouteTableSelector.Name})
 		if err != nil {
 			return nil, err
 		}
