@@ -30,7 +30,8 @@ type RpcPlugin struct {
 
 type GlooEdgeTrafficRouting struct {
 	RouteTableSelector     *DumbObjectSelector `json:"routeTableSelector" protobuf:"bytes,1,name=routeTableSelector"`
-	VirtualServiceSelector *DumbObjectSelector `json:"virtualService" protobuf:"bytes,1,name=virtualService"`
+	VirtualServiceSelector *DumbObjectSelector `json:"virtualService" protobuf:"bytes,2,name=virtualService"`
+	Routes                 []string            `json:"routes" protobuf:"bytes,3,name=routes"`
 }
 
 type DumbObjectSelector struct {

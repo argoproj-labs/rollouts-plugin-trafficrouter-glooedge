@@ -29,7 +29,9 @@ require (
 	github.com/PaesslerAG/jsonpath v0.1.1
 	github.com/ghodss/yaml v1.0.1-0.20190212211648-25d852aebe32
 	github.com/golang/mock v1.6.0
+	github.com/solo-io/solo-kit v0.31.0
 	github.com/stretchr/testify v1.8.2
+	golang.org/x/exp v0.0.0-20220921164117-439092de6870
 	google.golang.org/protobuf v1.30.0
 	k8s.io/apimachinery v0.25.8
 	k8s.io/client-go v0.25.8
@@ -82,7 +84,6 @@ require (
 	github.com/solo-io/go-utils v0.24.0 // indirect
 	github.com/solo-io/protoc-gen-ext v0.0.18 // indirect
 	github.com/solo-io/skv2 v0.29.2 // indirect
-	github.com/solo-io/solo-kit v0.31.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	go.uber.org/atomic v1.7.0 // indirect
 	go.uber.org/multierr v1.6.0 // indirect
