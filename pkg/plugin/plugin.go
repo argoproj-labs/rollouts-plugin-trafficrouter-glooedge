@@ -72,6 +72,7 @@ func (r *RpcPlugin) SetWeight(
 	rollout *v1alpha1.Rollout,
 	desiredWeight int32,
 	additionalDestinations []v1alpha1.WeightDestination) pluginTypes.RpcError {
+
 	// TODO: check rollout type
 	ctx := context.TODO()
 	glooPluginConfig, err := getPluginConfig(rollout)
@@ -104,7 +105,7 @@ func (r *RpcPlugin) SetMirrorRoute(rollout *v1alpha1.Rollout, setMirrorRoute *v1
 }
 
 func (r *RpcPlugin) VerifyWeight(rollout *v1alpha1.Rollout, desiredWeight int32, additionalDestinations []v1alpha1.WeightDestination) (pluginTypes.RpcVerified, pluginTypes.RpcError) {
-	return pluginTypes.Verified, pluginTypes.RpcError{}
+	return pluginTypes.NotImplemented, pluginTypes.RpcError{}
 }
 
 func (r *RpcPlugin) RemoveManagedRoutes(rollout *v1alpha1.Rollout) pluginTypes.RpcError {

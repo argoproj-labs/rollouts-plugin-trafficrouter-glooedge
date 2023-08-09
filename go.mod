@@ -28,6 +28,7 @@ require (
 	github.com/PaesslerAG/gval v1.2.2
 	github.com/PaesslerAG/jsonpath v0.1.1
 	github.com/ghodss/yaml v1.0.1-0.20190212211648-25d852aebe32
+	github.com/golang/mock v1.6.0
 	github.com/stretchr/testify v1.8.2
 	google.golang.org/protobuf v1.30.0
 	k8s.io/apimachinery v0.25.8

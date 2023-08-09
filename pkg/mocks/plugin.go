@@ -3,7 +3,6 @@ package mocks
 import (
 	"context"
 
-	"github.com/argoproj-labs/rollouts-plugin-trafficrouter-glooedge/pkg/gloo"
 	gloov1 "github.com/solo-io/solo-apis/pkg/api/gateway.solo.io/v1"
 	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -19,25 +18,25 @@ const (
 	RolloutName          = "mock"
 )
 
-func NewGlooMockClient() gloo.GlooV1ClientSet {
-	return &GlooMockClient{
-		rtClient: &glooMockRouteTableClient{},
-		vsClient: &glooMockVirtualServiceClient{},
-	}
-}
+// func NewGlooMockClient() gloo.GlooV1ClientSet {
+// 	return &GlooMockClient{
+// 		rtClient: &glooMockRouteTableClient{},
+// 		vsClient: &glooMockVirtualServiceClient{},
+// 	}
+// }
 
-type GlooMockClient struct {
-	rtClient *glooMockRouteTableClient
-	vsClient *glooMockVirtualServiceClient
-}
+// type GlooMockClient struct {
+// 	rtClient *glooMockRouteTableClient
+// 	vsClient *glooMockVirtualServiceClient
+// }
 
-func (c GlooMockClient) RouteTables() gloo.RouteTableClient {
-	return c.rtClient
-}
+// func (c GlooMockClient) RouteTables() gloo.RouteTableClient {
+// 	return c.rtClient
+// }
 
-func (c GlooMockClient) VirtualServices() gloo.VirtualServiceClient {
-	panic("not impl")
-}
+// func (c GlooMockClient) VirtualServices() gloo.VirtualServiceClient {
+// 	panic("not impl")
+// }
 
 type glooMockRouteTableClient struct {
 }
