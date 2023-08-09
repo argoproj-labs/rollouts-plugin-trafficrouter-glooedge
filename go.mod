@@ -1,6 +1,6 @@
 module github.com/argoproj-labs/rollouts-plugin-trafficrouter-glooedge
 
-go 1.20
+go 1.19
 
 replace (
 	github.com/docker/docker => github.com/moby/moby v0.7.3-0.20190826074503-38ab9da00309
@@ -18,7 +18,7 @@ replace (
 
 require (
 	github.com/argoproj/argo-rollouts v1.5.1
-	github.com/hashicorp/go-plugin v1.4.9
+	github.com/hashicorp/go-plugin v1.4.10
 	github.com/sirupsen/logrus v1.9.0
 	github.com/solo-io/solo-apis v0.0.0-20230714165959-0247436e773d
 
@@ -29,6 +29,7 @@ require (
 	github.com/PaesslerAG/jsonpath v0.1.1
 	github.com/ghodss/yaml v1.0.1-0.20190212211648-25d852aebe32
 	github.com/stretchr/testify v1.8.2
+	google.golang.org/protobuf v1.30.0
 	k8s.io/apimachinery v0.25.8
 	k8s.io/client-go v0.25.8
 	sigs.k8s.io/controller-runtime v0.13.1
@@ -95,7 +96,6 @@ require (
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20230110181048-76db0878b65f // indirect
 	google.golang.org/grpc v1.54.0 // indirect
-	google.golang.org/protobuf v1.30.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

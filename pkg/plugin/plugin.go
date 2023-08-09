@@ -30,7 +30,7 @@ type RpcPlugin struct {
 
 type GlooEdgeTrafficRouting struct {
 	RouteTableSelector     *DumbObjectSelector `json:"routeTableSelector" protobuf:"bytes,1,name=routeTableSelector"`
-	VirtualServiceSelector *DumbObjectSelector `json:"routeTableSelector" protobuf:"bytes,1,name=routeTableSelector"`
+	VirtualServiceSelector *DumbObjectSelector `json:"virtualService" protobuf:"bytes,1,name=virtualService"`
 }
 
 type DumbObjectSelector struct {
@@ -68,7 +68,10 @@ func (r *RpcPlugin) UpdateHash(rollout *v1alpha1.Rollout, canaryHash, stableHash
 	return pluginTypes.RpcError{}
 }
 
-func (r *RpcPlugin) SetWeight(rollout *v1alpha1.Rollout, desiredWeight int32, additionalDestinations []v1alpha1.WeightDestination) pluginTypes.RpcError {
+func (r *RpcPlugin) SetWeight(
+	rollout *v1alpha1.Rollout,
+	desiredWeight int32,
+	additionalDestinations []v1alpha1.WeightDestination) pluginTypes.RpcError {
 	// TODO: check rollout type
 	ctx := context.TODO()
 	glooPluginConfig, err := getPluginConfig(rollout)

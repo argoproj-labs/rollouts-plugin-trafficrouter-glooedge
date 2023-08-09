@@ -1,0 +1,26 @@
+apiVersion: gloo.solo.io/v1
+kind: Upstream
+metadata:
+  name: echo-v1
+  namespace: echo 
+spec:
+  kube:
+    selector:
+      app: echo
+    serviceName: echo-v1
+    serviceNamespace: echo
+    servicePort: 80
+---
+apiVersion: gloo.solo.io/v1
+kind: Upstream
+metadata:
+  name: echo-v2
+  namespace: echo
+spec:
+  kube:
+    selector:
+      app: echo
+    serviceName: echo-v2
+    serviceNamespace: echo
+    servicePort: 80
+

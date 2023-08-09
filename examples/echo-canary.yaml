@@ -1,0 +1,27 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: echo-rollouts
+  namespace: echo
+spec:
+  strategy:
+    canary:
+      canaryService: echo-v2 
+      stableService: echo-v1
+      trafficRouting:
+        plugins:
+          solo-io/glooedge:
+            virtualService:
+              name: echo
+              namespace: gloo-system
+      steps:
+      - setWeight: 10
+      - pause: {}
+      - setWeight: 20
+  selector:
+    matchLabels:
+      app: echo
+  workloadRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: echo-v2

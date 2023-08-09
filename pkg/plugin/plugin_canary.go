@@ -65,17 +65,15 @@ func (r *RpcPlugin) getDestinations(
 		}
 
 		for _, dst := range r.GetRouteAction().GetMulti().GetDestinations() {
-			if dst.GetDestination() == nil || dst.GetDestination().GetSubset() == nil ||
-				dst.GetDestination().GetSubset().GetValues() == nil {
+			if dst.GetDestination() == nil || dst.GetDestination().GetUpstream() == nil ||
+				dst.GetDestination().GetUpstream().GetName() == "" {
 				continue
 			}
-			vals := dst.GetDestination().GetSubset().GetValues()
-			if subset, ok := vals["version"]; ok {
-				if strings.EqualFold(rollout.Spec.Strategy.Canary.CanaryService, subset) {
-					canary = dst
-				} else if strings.EqualFold(rollout.Spec.Strategy.Canary.StableService, subset) {
-					stable = dst
-				}
+			name := dst.GetDestination().GetUpstream().GetName()
+			if strings.EqualFold(rollout.Spec.Strategy.Canary.CanaryService, name) {
+				canary = dst
+			} else if strings.EqualFold(rollout.Spec.Strategy.Canary.StableService, name) {
+				stable = dst
 			}
 		}
 	}
@@ -84,7 +82,7 @@ func (r *RpcPlugin) getDestinations(
 }
 
 func (r *RpcPlugin) getVS(ctx context.Context, rollout *v1alpha1.Rollout, pluginConfig *GlooEdgeTrafficRouting) (*gwv1.VirtualService, error) {
-	vsNamespace := pluginConfig.RouteTableSelector.Namespace
+	vsNamespace := pluginConfig.VirtualServiceSelector.Namespace
 
 	if vsNamespace == "" {
 		r.LogCtx.Debugf("defaulting VirtualService selector namespace to Rollout namespace %s for rollout %s", rollout.Namespace, rollout.Name)
