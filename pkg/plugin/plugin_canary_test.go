@@ -45,11 +45,6 @@ func (s *PluginCanarySuite) SetupTest() {
 	plugin = &RpcPlugin{Client: gwclient, LogCtx: testLogger.WithContext(ctx)}
 }
 
-// func (s *PluginCanarySuite) TearDownTest() {
-// fmt.Printf("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
-// defer ctrl.Finish()
-// }
-
 func TestPluginCanarySuite(t *testing.T) {
 	suite.Run(t, new(PluginCanarySuite))
 }
@@ -61,7 +56,7 @@ func (s *PluginCanarySuite) Test_getVirtualService() {
 		gomock.Eq(client.ObjectKey{Namespace: expectedNs, Name: expectedName})).Times(1).Return(&gwv1.VirtualService{}, nil)
 	gwclient.EXPECT().VirtualServices().Return(vsclient).Times(1)
 
-	vs, err := plugin.getVS(ctx, &v1alpha1.Rollout{},
+	vs, err := plugin.getVirtualService(ctx, &v1alpha1.Rollout{},
 		&GlooEdgeTrafficRouting{VirtualServiceSelector: &DumbObjectSelector{Namespace: expectedNs, Name: expectedName}})
 
 	assert.NoError(s.T(), err)
@@ -79,7 +74,7 @@ func (s *PluginCanarySuite) Test_getVirtualService_UsesRolloutNS() {
 	rollout.SetNamespace(expectedNs)
 	rollout.SetName("test-rollout")
 
-	vs, err := plugin.getVS(ctx, rollout,
+	vs, err := plugin.getVirtualService(ctx, rollout,
 		&GlooEdgeTrafficRouting{VirtualServiceSelector: &DumbObjectSelector{Namespace: "", Name: expectedName}})
 
 	assert.NoError(s.T(), err)
@@ -90,7 +85,7 @@ func (s *PluginCanarySuite) Test_getVirtualService_ReturnsErrorWhenNameIsMissing
 	expectedNs := "test-ns"
 	expectedName := ""
 
-	_, err := plugin.getVS(ctx, &v1alpha1.Rollout{},
+	_, err := plugin.getVirtualService(ctx, &v1alpha1.Rollout{},
 		&GlooEdgeTrafficRouting{VirtualServiceSelector: &DumbObjectSelector{Namespace: expectedNs, Name: expectedName}})
 
 	assert.Error(s.T(), err, fmt.Errorf("must specify the name of the VirtualService"))
@@ -144,7 +139,7 @@ func (s *PluginCanarySuite) Test_getDestinations() {
 		},
 	}
 
-	dsts, err := plugin.getDestinations(ctx,
+	dsts, err := plugin.getDestinationsInVirtualService(
 		&v1alpha1.Rollout{Spec: v1alpha1.RolloutSpec{
 			Strategy: v1alpha1.RolloutStrategy{
 				Canary: &v1alpha1.CanaryStrategy{
@@ -157,8 +152,8 @@ func (s *PluginCanarySuite) Test_getDestinations() {
 
 	assert.NoError(s.T(), err)
 	assert.Len(s.T(), dsts, 1)
-	assert.Equal(s.T(), expectedStableDst, dsts[0][0])
-	assert.Equal(s.T(), expectedCanaryDst, dsts[0][1])
+	assert.Equal(s.T(), expectedStableDst, dsts[0].Stable)
+	assert.Equal(s.T(), expectedCanaryDst, dsts[0].Canary)
 }
 
 func (s *PluginCanarySuite) Test_getDestinations_MultipleRoutes() {
@@ -245,7 +240,7 @@ func (s *PluginCanarySuite) Test_getDestinations_MultipleRoutes() {
 		},
 	}
 
-	dsts, err := plugin.getDestinations(ctx,
+	dsts, err := plugin.getDestinationsInVirtualService(
 		&v1alpha1.Rollout{Spec: v1alpha1.RolloutSpec{
 			Strategy: v1alpha1.RolloutStrategy{
 				Canary: &v1alpha1.CanaryStrategy{
@@ -258,10 +253,10 @@ func (s *PluginCanarySuite) Test_getDestinations_MultipleRoutes() {
 
 	assert.NoError(s.T(), err)
 	assert.Len(s.T(), dsts, 2)
-	assert.Equal(s.T(), expectedStableDst1, dsts[0][0])
-	assert.Equal(s.T(), expectedCanaryDst1, dsts[0][1])
-	assert.Equal(s.T(), expectedStableDst2, dsts[1][0])
-	assert.Equal(s.T(), expectedCanaryDst2, dsts[1][1])
+	assert.Equal(s.T(), expectedStableDst1, dsts[0].Stable)
+	assert.Equal(s.T(), expectedCanaryDst1, dsts[0].Canary)
+	assert.Equal(s.T(), expectedStableDst2, dsts[1].Stable)
+	assert.Equal(s.T(), expectedCanaryDst2, dsts[1].Canary)
 }
 
 // VirtualHost or Routes are missing from the VirtualService
@@ -286,7 +281,7 @@ func (s *PluginCanarySuite) Test_getDestinations_ReturnsErrorWithMissingVhOrRout
 		},
 	} {
 		s.T().Run(test.description, func(t *testing.T) {
-			_, err := plugin.getDestinations(ctx,
+			_, err := plugin.getDestinationsInVirtualService(
 				&v1alpha1.Rollout{},
 				&GlooEdgeTrafficRouting{
 					VirtualServiceSelector: &DumbObjectSelector{
@@ -377,7 +372,7 @@ func (s *PluginCanarySuite) Test_getDestinations_SkipsWhenDestinationIsMissingCo
 		},
 	} {
 		s.T().Run(test.description, func(t *testing.T) {
-			dsts, err := plugin.getDestinations(ctx,
+			_, err := plugin.getDestinationsInVirtualService(
 				&v1alpha1.Rollout{},
 				&GlooEdgeTrafficRouting{
 					VirtualServiceSelector: &DumbObjectSelector{
@@ -385,8 +380,8 @@ func (s *PluginCanarySuite) Test_getDestinations_SkipsWhenDestinationIsMissingCo
 						Name:      "test",
 					}},
 				test.vs)
-			assert.NoError(s.T(), err)
-			assert.Len(s.T(), dsts, 0)
+			assert.Error(s.T(), err)
+			assert.Contains(s.T(), err.Error(), "couldn't find stable and/or canary service in VirtualService")
 		})
 	}
 }
@@ -441,7 +436,7 @@ func (s *PluginCanarySuite) Test_getDestinations_MissingRoutes() {
 		},
 	}
 
-	_, err := plugin.getDestinations(ctx,
+	_, err := plugin.getDestinationsInVirtualService(
 		&v1alpha1.Rollout{Spec: v1alpha1.RolloutSpec{
 			Strategy: v1alpha1.RolloutStrategy{
 				Canary: &v1alpha1.CanaryStrategy{

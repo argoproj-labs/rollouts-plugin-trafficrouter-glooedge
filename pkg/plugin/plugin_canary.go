@@ -20,7 +20,25 @@ func (r *RpcPlugin) handleCanary(
 	additionalDestinations []v1alpha1.WeightDestination,
 	pluginConfig *GlooEdgeTrafficRouting) error {
 
-	vs, err := r.getVS(ctx, rollout, pluginConfig)
+	if (pluginConfig.VirtualServiceSelector == nil && pluginConfig.RouteTableSelector == nil) ||
+		(pluginConfig.VirtualServiceSelector != nil && pluginConfig.RouteTableSelector != nil) {
+		return fmt.Errorf("one of routeTable or virtualService must be configured")
+	}
+
+	if pluginConfig.RouteTableSelector != nil {
+		return r.handleCanaryUsingRouteTables(ctx, rollout, desiredWeight, additionalDestinations, pluginConfig)
+	}
+	return r.handleCanaryUsingVirtualService(ctx, rollout, desiredWeight, additionalDestinations, pluginConfig)
+}
+
+func (r *RpcPlugin) handleCanaryUsingVirtualService(
+	ctx context.Context,
+	rollout *v1alpha1.Rollout,
+	desiredWeight int32,
+	additionalDestinations []v1alpha1.WeightDestination,
+	pluginConfig *GlooEdgeTrafficRouting) error {
+
+	vs, err := r.getVirtualService(ctx, rollout, pluginConfig)
 	if err != nil {
 		return err
 	}
@@ -28,20 +46,14 @@ func (r *RpcPlugin) handleCanary(
 	originalVs := &gwv1.VirtualService{}
 	vs.DeepCopyInto(originalVs)
 
-	allDestinations, err := r.getDestinations(ctx, rollout, pluginConfig, vs)
+	allDestinations, err := r.getDestinationsInVirtualService(rollout, pluginConfig, vs)
 	if err != nil {
 		return err
 	}
 
-	if len(allDestinations) == 0 {
-		return fmt.Errorf("couldn't find stable and/or canary service in VirtualService %s:%s",
-			pluginConfig.VirtualServiceSelector.Namespace, pluginConfig.VirtualServiceSelector.Name)
-	}
-
-	for _, dsts := range allDestinations {
-		stable, canary := dsts[0], dsts[1]
-		stable.Weight = &wrapperspb.UInt32Value{Value: uint32(100 - desiredWeight)}
-		canary.Weight = &wrapperspb.UInt32Value{Value: uint32(desiredWeight)}
+	for _, dst := range allDestinations {
+		dst.Stable.Weight = &wrapperspb.UInt32Value{Value: uint32(100 - desiredWeight)}
+		dst.Canary.Weight = &wrapperspb.UInt32Value{Value: uint32(desiredWeight)}
 	}
 
 	if err = r.Client.VirtualServices().PatchVirtualService(ctx, vs, client.MergeFrom(originalVs)); err != nil {
@@ -51,12 +63,45 @@ func (r *RpcPlugin) handleCanary(
 	return nil
 }
 
-// returns an array of tuples {stable *v1.WeightedDestination, canary *v1.WeightedDestination}
-func (r *RpcPlugin) getDestinations(
+func (r *RpcPlugin) handleCanaryUsingRouteTables(
 	ctx context.Context,
 	rollout *v1alpha1.Rollout,
+	desiredWeight int32,
+	additionalDestinations []v1alpha1.WeightDestination,
+	pluginConfig *GlooEdgeTrafficRouting) error {
+
+	rts, err := r.getRouteTables(ctx, rollout, pluginConfig)
+	if err != nil {
+		return err
+	}
+
+	allRouteTablesForCanary, err := r.getDestinationsInRouteTables(rollout, pluginConfig, rts)
+	if err != nil {
+		return err
+	}
+
+	for _, rt := range allRouteTablesForCanary {
+		originalRt := &gwv1.RouteTable{}
+		rt.RouteTable.DeepCopyInto(originalRt)
+
+		for _, dst := range rt.Destinations {
+			dst.Stable.Weight = &wrapperspb.UInt32Value{Value: uint32(100 - desiredWeight)}
+			dst.Canary.Weight = &wrapperspb.UInt32Value{Value: uint32(desiredWeight)}
+		}
+
+		if err = r.Client.RouteTables().PatchRouteTable(ctx, rt.RouteTable, client.MergeFrom(originalRt)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// returns an array of tuples {stable *v1.WeightedDestination, canary *v1.WeightedDestination} or an error
+func (r *RpcPlugin) getDestinationsInVirtualService(
+	rollout *v1alpha1.Rollout,
 	pluginConfig *GlooEdgeTrafficRouting,
-	vs *gwv1.VirtualService) (ret [][]*v1.WeightedDestination, error error) {
+	vs *gwv1.VirtualService) (ret []destinationPair, error error) {
 
 	if vs.Spec.GetVirtualHost() == nil || vs.Spec.GetVirtualHost().GetRoutes() == nil {
 		return nil, fmt.Errorf("no virtual host or empty routes in VirtualSevice %s:%s",
@@ -67,7 +112,63 @@ func (r *RpcPlugin) getDestinations(
 		return nil, fmt.Errorf("virtual host has multiple routes but canary config doesn't specify which routes to use")
 	}
 
-	for _, r := range vs.Spec.GetVirtualHost().GetRoutes() {
+	ret = r.getDestinationsInRoutes(vs.Spec.GetVirtualHost().GetRoutes(), rollout, pluginConfig)
+
+	if len(pluginConfig.Routes) > 0 && len(ret) != len(pluginConfig.Routes) {
+		return nil, fmt.Errorf("some/all routes specified in canary rollout configuration do not have stable/canary services")
+	}
+
+	if len(ret) == 0 {
+		return nil, fmt.Errorf("couldn't find stable and/or canary service in VirtualService %s:%s",
+			pluginConfig.VirtualServiceSelector.Namespace, pluginConfig.VirtualServiceSelector.Name)
+	}
+
+	return ret, nil
+}
+
+type destinationPair struct {
+	Canary *v1.WeightedDestination
+	Stable *v1.WeightedDestination
+}
+
+type routeTableWithDestinations struct {
+	RouteTable   *gwv1.RouteTable
+	Destinations []destinationPair
+}
+
+func (r *RpcPlugin) getDestinationsInRouteTables(
+	rollout *v1alpha1.Rollout,
+	pluginConfig *GlooEdgeTrafficRouting,
+	routeTables []*gwv1.RouteTable) (ret []routeTableWithDestinations, err error) {
+
+	for _, rt := range routeTables {
+		if rt.Spec.GetRoutes() == nil {
+			continue
+		}
+
+		dsts := r.getDestinationsInRoutes(rt.Spec.GetRoutes(), rollout, pluginConfig)
+		if len(dsts) == 0 {
+			continue
+		}
+
+		ret = append(ret, routeTableWithDestinations{RouteTable: rt, Destinations: dsts})
+	}
+
+	if len(ret) == 0 {
+		return nil, fmt.Errorf("couldn't find stable and/or canary services in RouteTables selected with Name: %s, Namespace: %s, Labels: %v",
+			pluginConfig.RouteTableSelector.Name, pluginConfig.RouteTableSelector.Namespace, pluginConfig.RouteTableSelector.Labels)
+	}
+
+	return ret, nil
+}
+
+// returns an array of tuples {stable *v1.WeightedDestination, canary *v1.WeightedDestination}
+func (r *RpcPlugin) getDestinationsInRoutes(
+	routes []*gwv1.Route,
+	rollout *v1alpha1.Rollout,
+	pluginConfig *GlooEdgeTrafficRouting) (ret []destinationPair) {
+
+	for _, r := range routes {
 		if len(pluginConfig.Routes) > 0 && !slices.Contains(pluginConfig.Routes, r.GetName()) {
 			continue
 		}
@@ -91,18 +192,14 @@ func (r *RpcPlugin) getDestinations(
 			}
 		}
 		if stable != nil && canary != nil {
-			ret = append(ret, []*v1.WeightedDestination{stable, canary})
+			ret = append(ret, destinationPair{Stable: stable, Canary: canary})
 		}
 	}
 
-	if len(pluginConfig.Routes) > 0 && len(ret) != len(pluginConfig.Routes) {
-		return nil, fmt.Errorf("some/all routes specified in canary rollout configuration do not have stable/canary services")
-	}
-
-	return ret, nil
+	return ret
 }
 
-func (r *RpcPlugin) getVS(ctx context.Context, rollout *v1alpha1.Rollout, pluginConfig *GlooEdgeTrafficRouting) (*gwv1.VirtualService, error) {
+func (r *RpcPlugin) getVirtualService(ctx context.Context, rollout *v1alpha1.Rollout, pluginConfig *GlooEdgeTrafficRouting) (*gwv1.VirtualService, error) {
 	vsNamespace := pluginConfig.VirtualServiceSelector.Namespace
 
 	if vsNamespace == "" {
@@ -121,4 +218,48 @@ func (r *RpcPlugin) getVS(ctx context.Context, rollout *v1alpha1.Rollout, plugin
 	}
 
 	return vs, nil
+}
+
+func (r *RpcPlugin) getRouteTables(ctx context.Context, rollout *v1alpha1.Rollout, pluginConfig *GlooEdgeTrafficRouting) ([]*gwv1.RouteTable, error) {
+	namespace := pluginConfig.VirtualServiceSelector.Namespace
+
+	if namespace == "" {
+		r.LogCtx.Debugf("defaulting RouteTable selector namespace to Rollout namespace %s for rollout %s", rollout.Namespace, rollout.Name)
+		namespace = rollout.Namespace
+	}
+
+	if pluginConfig.RouteTableSelector.Name == "" || len(pluginConfig.RouteTableSelector.Labels) == 0 {
+		return nil, fmt.Errorf("name or labels field must be set in RouteTable selector")
+	}
+
+	if pluginConfig.RouteTableSelector.Name != "" {
+		return r.getRouteTable(ctx, namespace, pluginConfig.RouteTableSelector.Name)
+	}
+
+	return r.listRouteTables(ctx, namespace, pluginConfig)
+}
+
+func (r *RpcPlugin) getRouteTable(ctx context.Context, ns, name string) ([]*gwv1.RouteTable, error) {
+	rt, err := r.Client.RouteTables().GetRouteTable(ctx,
+		client.ObjectKey{Namespace: ns, Name: name})
+	if err != nil {
+		return nil, err
+	}
+	return []*gwv1.RouteTable{rt}, nil
+}
+
+func (r *RpcPlugin) listRouteTables(ctx context.Context, ns string, pluginConfig *GlooEdgeTrafficRouting) ([]*gwv1.RouteTable, error) {
+	rts, err := r.Client.RouteTables().ListRouteTable(ctx,
+		client.MatchingLabels(pluginConfig.RouteTableSelector.Labels),
+		client.InNamespace(ns))
+	if err != nil {
+		return nil, err
+	}
+
+	ret := make([]*gwv1.RouteTable, len(rts.Items))
+	for i := range rts.Items {
+		ret[i] = &rts.Items[i]
+	}
+
+	return ret, nil
 }
