@@ -15,7 +15,7 @@ spec:
       containers:
         - image: hashicorp/http-echo
           args:
-            - "-text=version:v1"
+            - "-text=version:v2"
             - -listen=:8080
           imagePullPolicy: Always
           name: echo-v2
@@ -33,9 +33,7 @@ spec:
               namespace: gloo-system
       steps:
         - setWeight: 10
-        - pause: {duration: 10m}
-        - setWeight: 20
         - pause: {}
-        - setWeight: 30
+        - setWeight: 90
         - pause: {}
 
