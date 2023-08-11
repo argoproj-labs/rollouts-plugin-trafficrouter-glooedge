@@ -91,7 +91,7 @@ func (s *PluginCanarySuite) Test_getVirtualService_ReturnsErrorWhenNameIsMissing
 	assert.Error(s.T(), err, fmt.Errorf("must specify the name of the VirtualService"))
 }
 
-func (s *PluginCanarySuite) Test_getDestinations() {
+func (s *PluginCanarySuite) Test_getDestinationsInVirtualService() {
 	stableUpstream := "stable-upstream"
 	canaryUpstream := "canary-upstream"
 
@@ -156,7 +156,7 @@ func (s *PluginCanarySuite) Test_getDestinations() {
 	assert.Equal(s.T(), expectedCanaryDst, dsts[0].Canary)
 }
 
-func (s *PluginCanarySuite) Test_getDestinations_MultipleRoutes() {
+func (s *PluginCanarySuite) Test_getDestinationsInVirtualService_MultipleRoutes() {
 	stableUpstream := "stable-upstream"
 	canaryUpstream := "canary-upstream"
 
@@ -260,7 +260,7 @@ func (s *PluginCanarySuite) Test_getDestinations_MultipleRoutes() {
 }
 
 // VirtualHost or Routes are missing from the VirtualService
-func (s *PluginCanarySuite) Test_getDestinations_ReturnsErrorWithMissingVhOrRoutes() {
+func (s *PluginCanarySuite) Test_getDestinationsInVirtualService_ReturnsErrorWithMissingVhOrRoutes() {
 	type errorTestCases struct {
 		description string
 		vs          *gwv1.VirtualService
@@ -295,99 +295,27 @@ func (s *PluginCanarySuite) Test_getDestinations_ReturnsErrorWithMissingVhOrRout
 	}
 }
 
-// any of RouteAction/MultiDestination/WeightedDestination/Destination/Upstream are missing
-func (s *PluginCanarySuite) Test_getDestinations_SkipsWhenDestinationIsMissingComponents() {
-	type errorTestCases struct {
-		description string
-		vs          *gwv1.VirtualService
-	}
+// multiple routes present in VS, but none specified in plugin config
+func (s *PluginCanarySuite) Test_getDestinationsInVirtualService_MissingPluginConfig() {
+	vs := gwv1.VirtualService{
+		Spec: gwv1.VirtualServiceSpec{
+			VirtualHost: &gwv1.VirtualHost{
+				Routes: []*gwv1.Route{
+					{Name: "route-1"},
+					{Name: "route-2"},
+				}}}}
 
-	for _, test := range []errorTestCases{
-		{
-			description: "missing RouteAction",
-			vs: &gwv1.VirtualService{Spec: gwv1.VirtualServiceSpec{
-				VirtualHost: &gwv1.VirtualHost{
-					Routes: []*gwv1.Route{{}}},
-			}},
-		},
-		{
-			description: "missing MultiDestination",
-			vs: &gwv1.VirtualService{Spec: gwv1.VirtualServiceSpec{
-				VirtualHost: &gwv1.VirtualHost{
-					Routes: []*gwv1.Route{{
-						Action: &gwv1.Route_RouteAction{
-							RouteAction: &v1.RouteAction{}},
-					}}},
-			}},
-		},
-		{
-			description: "missing WeightedDestination",
-			vs: &gwv1.VirtualService{Spec: gwv1.VirtualServiceSpec{
-				VirtualHost: &gwv1.VirtualHost{
-					Routes: []*gwv1.Route{{
-						Action: &gwv1.Route_RouteAction{
-							RouteAction: &v1.RouteAction{
-								Destination: &v1.RouteAction_Multi{
-									Multi: &v1.MultiDestination{},
-								},
-							}},
-					}}},
-			}},
-		},
-		{
-			description: "missing Destination",
-			vs: &gwv1.VirtualService{Spec: gwv1.VirtualServiceSpec{
-				VirtualHost: &gwv1.VirtualHost{
-					Routes: []*gwv1.Route{{
-						Action: &gwv1.Route_RouteAction{
-							RouteAction: &v1.RouteAction{
-								Destination: &v1.RouteAction_Multi{
-									Multi: &v1.MultiDestination{
-										Destinations: []*v1.WeightedDestination{
-											{},
-										},
-									},
-								},
-							}},
-					}}},
-			}},
-		},
-		{
-			description: "missing Upstream",
-			vs: &gwv1.VirtualService{Spec: gwv1.VirtualServiceSpec{
-				VirtualHost: &gwv1.VirtualHost{
-					Routes: []*gwv1.Route{{
-						Action: &gwv1.Route_RouteAction{
-							RouteAction: &v1.RouteAction{
-								Destination: &v1.RouteAction_Multi{
-									Multi: &v1.MultiDestination{
-										Destinations: []*v1.WeightedDestination{
-											{Destination: &v1.Destination{}},
-										},
-									},
-								},
-							}},
-					}}},
-			}},
-		},
-	} {
-		s.T().Run(test.description, func(t *testing.T) {
-			_, err := plugin.getDestinationsInVirtualService(
-				&v1alpha1.Rollout{},
-				&GlooEdgeTrafficRouting{
-					VirtualServiceSelector: &DumbObjectSelector{
-						Namespace: "test",
-						Name:      "test",
-					}},
-				test.vs)
-			assert.Error(s.T(), err)
-			assert.Contains(s.T(), err.Error(), "couldn't find stable and/or canary service in VirtualService")
-		})
-	}
+	_, err := plugin.getDestinationsInVirtualService(
+		&v1alpha1.Rollout{Spec: v1alpha1.RolloutSpec{}},
+		&GlooEdgeTrafficRouting{Routes: []string{}}, &vs)
+
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(),
+		"virtual host has multiple routes but canary config doesn't specify which routes to use")
 }
 
 // multiple routes specified in plugin config, but not all are present in VS
-func (s *PluginCanarySuite) Test_getDestinations_MissingRoutes() {
+func (s *PluginCanarySuite) Test_getDestinationsInVirtualService_MissingRoutes() {
 	stableUpstream := "stable-upstream"
 	canaryUpstream := "canary-upstream"
 
@@ -450,6 +378,201 @@ func (s *PluginCanarySuite) Test_getDestinations_MissingRoutes() {
 	assert.Error(s.T(), err)
 	assert.Contains(s.T(), err.Error(),
 		"some/all routes specified in canary rollout configuration do not have stable/canary services")
+}
+
+func (s *PluginCanarySuite) Test_getDestinationsInVirtualService_MissingCanaryOrStableUpstream() {
+	vs := gwv1.VirtualService{
+		Spec: gwv1.VirtualServiceSpec{
+			VirtualHost: &gwv1.VirtualHost{
+				Routes: []*gwv1.Route{
+					{
+						Action: &gwv1.Route_RouteAction{
+							RouteAction: &v1.RouteAction{
+								Destination: &v1.RouteAction_Multi{
+									Multi: &v1.MultiDestination{
+										Destinations: []*v1.WeightedDestination{
+											{
+												Destination: &v1.Destination{
+													DestinationType: &v1.Destination_Upstream{
+														Upstream: &core.ResourceRef{
+															Name: "stable",
+														},
+													},
+												},
+												Weight: wrapperspb.UInt32(uint32(90)),
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_, err := plugin.getDestinationsInVirtualService(
+		&v1alpha1.Rollout{Spec: v1alpha1.RolloutSpec{
+			Strategy: v1alpha1.RolloutStrategy{
+				Canary: &v1alpha1.CanaryStrategy{
+					StableService: "stable",
+					CanaryService: "canary",
+				},
+			},
+		}},
+		&GlooEdgeTrafficRouting{
+			VirtualServiceSelector: &DumbObjectSelector{Name: "testvs", Namespace: "testns"}}, &vs)
+
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(),
+		"couldn't find stable and/or canary upstream in VirtualService testns/testvs")
+}
+
+// skip route if any of RouteAction/MultiDestination/WeightedDestination/Destination/Upstream are missing
+// skip route if either canary or stable upstreams are missing
+// skip route if its name isn't in the list of routes (GlooEdgeTrafficRouting.Routes)
+//
+// (TODO) dmitri-d It's very easy to get a false pass for this test
+// the order of tests mimicks the order of checks in getDestinationsInRoutes
+// to make it more managable
+func (s *PluginCanarySuite) Test_getDestinationsInRoutes_SkipsWhenDestinationIsMissingComponents() {
+	type errorTestCases struct {
+		description string
+		routes      []*gwv1.Route
+	}
+
+	stableUpstreamName := "stable-upstream"
+	canaryUpstreamName := "canary-upstream"
+	routeInList := "expected-route"
+
+	for _, test := range []errorTestCases{
+		{
+			description: "missing RouteAction",
+			routes:      []*gwv1.Route{{Name: routeInList}},
+		},
+		{
+			description: "missing MultiDestination",
+			routes: []*gwv1.Route{{
+				Name: routeInList,
+				Action: &gwv1.Route_RouteAction{
+					RouteAction: &v1.RouteAction{}},
+			}},
+		},
+		{
+			description: "missing WeightedDestination",
+			routes: []*gwv1.Route{{
+				Name: routeInList,
+				Action: &gwv1.Route_RouteAction{
+					RouteAction: &v1.RouteAction{
+						Destination: &v1.RouteAction_Multi{
+							Multi: &v1.MultiDestination{},
+						},
+					}},
+			}},
+		},
+		{
+			description: "missing Destination",
+			routes: []*gwv1.Route{{
+				Name: routeInList,
+				Action: &gwv1.Route_RouteAction{
+					RouteAction: &v1.RouteAction{
+						Destination: &v1.RouteAction_Multi{
+							Multi: &v1.MultiDestination{
+								Destinations: []*v1.WeightedDestination{
+									{},
+								},
+							},
+						},
+					}},
+			}},
+		},
+		{
+			description: "missing Upstream",
+			routes: []*gwv1.Route{{
+				Name: routeInList,
+				Action: &gwv1.Route_RouteAction{
+					RouteAction: &v1.RouteAction{
+						Destination: &v1.RouteAction_Multi{
+							Multi: &v1.MultiDestination{
+								Destinations: []*v1.WeightedDestination{
+									{Destination: &v1.Destination{}},
+								},
+							},
+						},
+					}},
+			}},
+		},
+		{
+			description: "missing canary Upstream",
+			routes: []*gwv1.Route{{
+				Name: routeInList,
+				Action: &gwv1.Route_RouteAction{
+					RouteAction: &v1.RouteAction{
+						Destination: &v1.RouteAction_Multi{
+							Multi: &v1.MultiDestination{
+								Destinations: []*v1.WeightedDestination{
+									{Destination: &v1.Destination{
+										DestinationType: &v1.Destination_Upstream{
+											Upstream: &core.ResourceRef{
+												Name: stableUpstreamName,
+											},
+										},
+									}},
+								},
+							},
+						},
+					}},
+			}},
+		},
+		{
+			description: "missing stable Upstream",
+			routes: []*gwv1.Route{{
+				Name: routeInList,
+				Action: &gwv1.Route_RouteAction{
+					RouteAction: &v1.RouteAction{
+						Destination: &v1.RouteAction_Multi{
+							Multi: &v1.MultiDestination{
+								Destinations: []*v1.WeightedDestination{
+									{Destination: &v1.Destination{
+										DestinationType: &v1.Destination_Upstream{
+											Upstream: &core.ResourceRef{
+												Name: canaryUpstreamName,
+											},
+										},
+									}},
+								},
+							},
+						},
+					}},
+			}},
+		},
+		{
+			description: "Route name isn't in the list of routes in 'GlooEdgeTrafficRouting.Routes'",
+			routes: []*gwv1.Route{{
+				Name: "not-in-the-list",
+			}},
+		},
+	} {
+		s.T().Run(test.description, func(t *testing.T) {
+			dsts := plugin.getDestinationsInRoutes(
+				test.routes,
+				&v1alpha1.Rollout{
+					Spec: v1alpha1.RolloutSpec{
+						Strategy: v1alpha1.RolloutStrategy{
+							Canary: &v1alpha1.CanaryStrategy{
+								CanaryService: canaryUpstreamName,
+								StableService: stableUpstreamName,
+							},
+						},
+					},
+				},
+				&GlooEdgeTrafficRouting{
+					Routes: []string{routeInList},
+				})
+			assert.Len(s.T(), dsts, 0)
+		})
+	}
 }
 
 func (s *PluginCanarySuite) Test_handleCanary() {

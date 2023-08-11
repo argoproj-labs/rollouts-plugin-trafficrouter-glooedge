@@ -97,7 +97,6 @@ func (r *RpcPlugin) handleCanaryUsingRouteTables(
 	return nil
 }
 
-// returns an array of tuples {stable *v1.WeightedDestination, canary *v1.WeightedDestination} or an error
 func (r *RpcPlugin) getDestinationsInVirtualService(
 	rollout *v1alpha1.Rollout,
 	pluginConfig *GlooEdgeTrafficRouting,
@@ -119,8 +118,8 @@ func (r *RpcPlugin) getDestinationsInVirtualService(
 	}
 
 	if len(ret) == 0 {
-		return nil, fmt.Errorf("couldn't find stable and/or canary service in VirtualService %s:%s",
-			pluginConfig.VirtualServiceSelector.Namespace, pluginConfig.VirtualServiceSelector.Name)
+		return nil, fmt.Errorf("couldn't find stable and/or canary upstream in VirtualService %s/%s, with route names in %v",
+			pluginConfig.VirtualServiceSelector.Namespace, pluginConfig.VirtualServiceSelector.Name, pluginConfig.Routes)
 	}
 
 	return ret, nil
@@ -146,6 +145,11 @@ func (r *RpcPlugin) getDestinationsInRouteTables(
 			continue
 		}
 
+		if len(rt.Spec.GetRoutes()) > 1 && len(pluginConfig.Routes) == 0 {
+			return nil,
+				fmt.Errorf("route table %s/%s has multiple routes but canary config doesn't specify which routes to use", rt.GetNamespace(), rt.GetName())
+		}
+
 		dsts := r.getDestinationsInRoutes(rt.Spec.GetRoutes(), rollout, pluginConfig)
 		if len(dsts) == 0 {
 			continue
@@ -155,14 +159,13 @@ func (r *RpcPlugin) getDestinationsInRouteTables(
 	}
 
 	if len(ret) == 0 {
-		return nil, fmt.Errorf("couldn't find stable and/or canary services in RouteTables selected with Name: %s, Namespace: %s, Labels: %v",
-			pluginConfig.RouteTableSelector.Name, pluginConfig.RouteTableSelector.Namespace, pluginConfig.RouteTableSelector.Labels)
+		return nil, fmt.Errorf("couldn't find stable and/or canary services in RouteTables selected with Name: '%s', Namespace: '%s', Labels: %v, with route names in %v",
+			pluginConfig.RouteTableSelector.Name, pluginConfig.RouteTableSelector.Namespace, pluginConfig.RouteTableSelector.Labels, pluginConfig.Routes)
 	}
 
 	return ret, nil
 }
 
-// returns an array of tuples {stable *v1.WeightedDestination, canary *v1.WeightedDestination}
 func (r *RpcPlugin) getDestinationsInRoutes(
 	routes []*gwv1.Route,
 	rollout *v1alpha1.Rollout,
@@ -221,14 +224,14 @@ func (r *RpcPlugin) getVirtualService(ctx context.Context, rollout *v1alpha1.Rol
 }
 
 func (r *RpcPlugin) getRouteTables(ctx context.Context, rollout *v1alpha1.Rollout, pluginConfig *GlooEdgeTrafficRouting) ([]*gwv1.RouteTable, error) {
-	namespace := pluginConfig.VirtualServiceSelector.Namespace
+	namespace := pluginConfig.RouteTableSelector.Namespace
 
 	if namespace == "" {
 		r.LogCtx.Debugf("defaulting RouteTable selector namespace to Rollout namespace %s for rollout %s", rollout.Namespace, rollout.Name)
 		namespace = rollout.Namespace
 	}
 
-	if pluginConfig.RouteTableSelector.Name == "" || len(pluginConfig.RouteTableSelector.Labels) == 0 {
+	if pluginConfig.RouteTableSelector.Name == "" && len(pluginConfig.RouteTableSelector.Labels) == 0 {
 		return nil, fmt.Errorf("name or labels field must be set in RouteTable selector")
 	}
 
