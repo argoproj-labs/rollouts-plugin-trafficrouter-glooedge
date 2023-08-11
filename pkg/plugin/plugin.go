@@ -9,7 +9,6 @@ import (
 	"github.com/argoproj/argo-rollouts/pkg/apis/rollouts/v1alpha1"
 	pluginTypes "github.com/argoproj/argo-rollouts/utils/plugin/types"
 	"github.com/sirupsen/logrus"
-	gloov1 "github.com/solo-io/solo-apis/pkg/api/gateway.solo.io/v1"
 )
 
 const (
@@ -36,17 +35,6 @@ type DumbObjectSelector struct {
 	Namespace string            `json:"namespace" protobuf:"bytes,3,name=namespace"`
 }
 
-type GlooMatchedRouteTable struct {
-	// matched gloo platform route table
-	RouteTable *gloov1.RouteTable
-	// matched http routes within the routetable
-	// HttpRoutes []*GlooMatchedHttpRoutes
-	// // matched tcp routes within the routetable
-	// TCPRoutes []*GlooMatchedTCPRoutes
-	// // matched tls routes within the routetable
-	// TLSRoutes []*GlooMatchedTLSRoutes
-}
-
 func (r *RpcPlugin) InitPlugin() pluginTypes.RpcError {
 	if r.IsTest {
 		return pluginTypes.RpcError{}
@@ -70,7 +58,6 @@ func (r *RpcPlugin) SetWeight(
 	desiredWeight int32,
 	additionalDestinations []v1alpha1.WeightDestination) pluginTypes.RpcError {
 
-	// TODO: check rollout type
 	ctx := context.TODO()
 	glooPluginConfig, err := getPluginConfig(rollout)
 	if err != nil {
@@ -86,8 +73,6 @@ func (r *RpcPlugin) SetWeight(
 				ErrorString: fmt.Sprintf("failed canary rollout: %s", err),
 			}
 		}
-	} else if rollout.Spec.Strategy.BlueGreen != nil {
-		return r.handleBlueGreen(rollout, glooPluginConfig)
 	}
 
 	return pluginTypes.RpcError{}
