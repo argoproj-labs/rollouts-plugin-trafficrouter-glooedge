@@ -2,4 +2,4 @@
 .DS_Store
 dist
 rollouts-plugin-trafficrouter-glooedge
-.swp
+*.swp

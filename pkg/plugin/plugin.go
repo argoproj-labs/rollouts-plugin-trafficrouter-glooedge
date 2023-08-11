@@ -109,3 +109,11 @@ func getPluginConfig(rollout *v1alpha1.Rollout) (*GlooEdgeTrafficRouting, error)
 
 	return &glooplatformConfig, nil
 }
+
+func getStableServiceName(rollout *v1alpha1.Rollout) string {
+	return rollout.Spec.Strategy.Canary.StableService
+}
+
+func getCanaryServiceName(rollout *v1alpha1.Rollout) string {
+	return rollout.Spec.Strategy.Canary.CanaryService
+}

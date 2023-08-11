@@ -74,11 +74,6 @@ spec:
                 name: echo-v1
                 namespace: echo
             weight: 100
-          - destination:
-              upstream:
-                name: echo-v2
-                namespace: echo
-            weight: 0
 ---
 apiVersion: apps/v1
 kind: Deployment

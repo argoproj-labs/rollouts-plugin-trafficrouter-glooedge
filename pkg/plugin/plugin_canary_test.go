@@ -30,6 +30,7 @@ var (
 	ctx        context.Context
 	gwclient   *gloov1.MockClientset
 	vsclient   *gloov1.MockVirtualServiceClient
+	rtclient   *gloov1.MockRouteTableClient
 	loggerHook *test.Hook
 )
 
@@ -38,6 +39,7 @@ func (s *PluginCanarySuite) SetupTest() {
 	ctrl = gomock.NewController(s.T())
 	gwclient = gloov1.NewMockClientset(ctrl)
 	vsclient = gloov1.NewMockVirtualServiceClient(ctrl)
+	rtclient = gloov1.NewMockRouteTableClient(ctrl)
 	var testLogger *logrus.Logger
 	// see https://github.com/mpchadwick/dbanon/blob/v0.6.0/src/provider_test.go#L39-L42
 	// for example of how to use the hook in tests
@@ -377,7 +379,7 @@ func (s *PluginCanarySuite) Test_getDestinationsInVirtualService_MissingRoutes()
 
 	assert.Error(s.T(), err)
 	assert.Contains(s.T(), err.Error(),
-		"some/all routes specified in canary rollout configuration do not have stable/canary services")
+		"some/all routes specified in canary rollout configuration do not have stable upstreams")
 }
 
 func (s *PluginCanarySuite) Test_getDestinationsInVirtualService_MissingCanaryOrStableUpstream() {
@@ -395,7 +397,7 @@ func (s *PluginCanarySuite) Test_getDestinationsInVirtualService_MissingCanaryOr
 												Destination: &v1.Destination{
 													DestinationType: &v1.Destination_Upstream{
 														Upstream: &core.ResourceRef{
-															Name: "stable",
+															Name: "unexpected",
 														},
 													},
 												},
@@ -426,7 +428,104 @@ func (s *PluginCanarySuite) Test_getDestinationsInVirtualService_MissingCanaryOr
 
 	assert.Error(s.T(), err)
 	assert.Contains(s.T(), err.Error(),
-		"couldn't find stable and/or canary upstream in VirtualService testns/testvs")
+		"couldn't find stable upstreams in VirtualService testns/testvs, with route names in []")
+}
+
+func (s *PluginCanarySuite) Test_getDestinationsInRoutes() {
+	stableUpstreamName := "stable-upstream"
+	canaryUpstreamName := "canary-upstream"
+
+	routes := []*gwv1.Route{
+		{
+			Name: "route-1",
+			Action: &gwv1.Route_RouteAction{
+				RouteAction: &v1.RouteAction{
+					Destination: &v1.RouteAction_Multi{
+						Multi: &v1.MultiDestination{
+							Destinations: []*v1.WeightedDestination{
+								{Destination: &v1.Destination{
+									DestinationType: &v1.Destination_Upstream{
+										Upstream: &core.ResourceRef{
+											Name: stableUpstreamName,
+										},
+									},
+								}},
+								{Destination: &v1.Destination{
+									DestinationType: &v1.Destination_Upstream{
+										Upstream: &core.ResourceRef{
+											Name: canaryUpstreamName,
+										},
+									},
+								}},
+							},
+						},
+					},
+				}},
+		},
+		{
+			Name: "route-2",
+			Action: &gwv1.Route_RouteAction{
+				RouteAction: &v1.RouteAction{
+					Destination: &v1.RouteAction_Multi{
+						Multi: &v1.MultiDestination{
+							Destinations: []*v1.WeightedDestination{
+								{Destination: &v1.Destination{
+									DestinationType: &v1.Destination_Upstream{
+										Upstream: &core.ResourceRef{
+											Name: stableUpstreamName,
+										},
+									},
+								}},
+							},
+						},
+					},
+				}},
+		},
+		{
+			Name: "route-3",
+			Action: &gwv1.Route_RouteAction{
+				RouteAction: &v1.RouteAction{
+					Destination: &v1.RouteAction_Multi{
+						Multi: &v1.MultiDestination{
+							Destinations: []*v1.WeightedDestination{
+								{Destination: &v1.Destination{
+									DestinationType: &v1.Destination_Upstream{
+										Upstream: &core.ResourceRef{
+											Name: stableUpstreamName,
+										},
+									},
+								}},
+							},
+						},
+					},
+				}},
+		},
+	}
+
+	dsts := plugin.getDestinationsInRoutes(
+		routes,
+		&v1alpha1.Rollout{
+			Spec: v1alpha1.RolloutSpec{
+				Strategy: v1alpha1.RolloutStrategy{
+					Canary: &v1alpha1.CanaryStrategy{
+						CanaryService: canaryUpstreamName,
+						StableService: stableUpstreamName,
+					},
+				},
+			},
+		},
+		&GlooEdgeTrafficRouting{
+			Routes: []string{"route-1", "route-2"},
+		})
+
+	assert.Len(s.T(), dsts, 2)
+	assert.Equal(s.T(), routes[0].GetRouteAction().GetMulti().GetDestinations(), dsts[0].DestinationsParent.Destinations)
+	assert.Equal(s.T(), routes[0].GetRouteAction().GetMulti().GetDestinations()[0], dsts[0].Stable)
+	assert.Equal(s.T(), routes[0].GetRouteAction().GetMulti().GetDestinations()[1], dsts[0].Canary)
+
+	assert.Equal(s.T(), routes[1].GetRouteAction().GetMulti().GetDestinations(), dsts[1].DestinationsParent.Destinations)
+	assert.Equal(s.T(), routes[1].GetRouteAction().GetMulti().GetDestinations()[0], dsts[1].Stable)
+	assert.Nil(s.T(), dsts[1].Canary)
 }
 
 // skip route if any of RouteAction/MultiDestination/WeightedDestination/Destination/Upstream are missing
@@ -504,28 +603,6 @@ func (s *PluginCanarySuite) Test_getDestinationsInRoutes_SkipsWhenDestinationIsM
 			}},
 		},
 		{
-			description: "missing canary Upstream",
-			routes: []*gwv1.Route{{
-				Name: routeInList,
-				Action: &gwv1.Route_RouteAction{
-					RouteAction: &v1.RouteAction{
-						Destination: &v1.RouteAction_Multi{
-							Multi: &v1.MultiDestination{
-								Destinations: []*v1.WeightedDestination{
-									{Destination: &v1.Destination{
-										DestinationType: &v1.Destination_Upstream{
-											Upstream: &core.ResourceRef{
-												Name: stableUpstreamName,
-											},
-										},
-									}},
-								},
-							},
-						},
-					}},
-			}},
-		},
-		{
 			description: "missing stable Upstream",
 			routes: []*gwv1.Route{{
 				Name: routeInList,
@@ -570,12 +647,102 @@ func (s *PluginCanarySuite) Test_getDestinationsInRoutes_SkipsWhenDestinationIsM
 				&GlooEdgeTrafficRouting{
 					Routes: []string{routeInList},
 				})
-			assert.Len(s.T(), dsts, 0)
+			assert.Len(s.T(), dsts, 0, test.description)
 		})
 	}
 }
 
-func (s *PluginCanarySuite) Test_handleCanary() {
+func (s *PluginCanarySuite) Test_maybeCreateCanaryDestinations() {
+	canarysvc := "canarysvc"
+	stablesvc := "stablesvc"
+
+	rts := []routeTableWithDestinations{
+		{
+			Destinations: []destinationPair{
+				{
+					DestinationsParent: &v1.MultiDestination{
+						Destinations: []*v1.WeightedDestination{},
+					},
+					Stable: &v1.WeightedDestination{
+						Destination: &v1.Destination{
+							DestinationType: &v1.Destination_Upstream{
+								Upstream: &core.ResourceRef{
+									Name: stablesvc,
+								},
+							},
+						},
+						Weight: wrapperspb.UInt32(uint32(90)),
+					},
+					Canary: nil,
+				},
+				{
+					DestinationsParent: &v1.MultiDestination{
+						Destinations: []*v1.WeightedDestination{},
+					},
+					Stable: &v1.WeightedDestination{
+						Destination: &v1.Destination{
+							DestinationType: &v1.Destination_Upstream{
+								Upstream: &core.ResourceRef{
+									Name: stablesvc,
+								},
+							},
+						},
+					},
+					Canary: nil,
+				},
+			},
+		},
+		{
+			Destinations: []destinationPair{
+				{
+					DestinationsParent: &v1.MultiDestination{
+						Destinations: []*v1.WeightedDestination{},
+					},
+					Stable: &v1.WeightedDestination{
+						Destination: &v1.Destination{
+							DestinationType: &v1.Destination_Upstream{
+								Upstream: &core.ResourceRef{
+									Name: stablesvc,
+								},
+							},
+						},
+						Weight: wrapperspb.UInt32(uint32(90)),
+					},
+					Canary: nil,
+				},
+				{
+					DestinationsParent: &v1.MultiDestination{
+						Destinations: []*v1.WeightedDestination{},
+					},
+					Stable: &v1.WeightedDestination{
+						Destination: &v1.Destination{
+							DestinationType: &v1.Destination_Upstream{
+								Upstream: &core.ResourceRef{
+									Name: stablesvc,
+								},
+							},
+						},
+					},
+					Canary: nil,
+				},
+			},
+		},
+	}
+
+	plugin.maybeCreateCanaryDestinations(rts, canarysvc)
+
+	for i := 0; i < 2; i++ {
+		for j := 0; j < 2; j++ {
+			assert.Len(s.T(), rts[i].Destinations[j].DestinationsParent.GetDestinations(), 1)
+			assert.NotNil(s.T(), rts[i].Destinations[j].Canary)
+			assert.Equal(s.T(), canarysvc, rts[i].Destinations[j].Canary.GetDestination().GetUpstream().GetName())
+			assert.Equal(s.T(), rts[i].Destinations[j].Canary,
+				rts[i].Destinations[j].DestinationsParent.GetDestinations()[0])
+		}
+	}
+}
+
+func (s *PluginCanarySuite) Test_handleCanary_UsingVirtualService() {
 
 	testns := "testns"
 	testvs := "testvs"
@@ -606,16 +773,7 @@ func (s *PluginCanarySuite) Test_handleCanary() {
 												},
 												Weight: wrapperspb.UInt32(uint32(90)),
 											},
-											{
-												Destination: &v1.Destination{
-													DestinationType: &v1.Destination_Upstream{
-														Upstream: &core.ResourceRef{
-															Name: canarysvc,
-														},
-													},
-												},
-												Weight: wrapperspb.UInt32(uint32(10)),
-											},
+											// canary destination will be created
 										},
 									},
 								},
@@ -655,6 +813,29 @@ func (s *PluginCanarySuite) Test_handleCanary() {
 							},
 						},
 					},
+					{
+						// this route will remain unchanged
+						Name: "route3",
+						Action: &gwv1.Route_RouteAction{
+							RouteAction: &v1.RouteAction{
+								Destination: &v1.RouteAction_Multi{
+									Multi: &v1.MultiDestination{
+										Destinations: []*v1.WeightedDestination{
+											{
+												Destination: &v1.Destination{
+													DestinationType: &v1.Destination_Upstream{
+														Upstream: &core.ResourceRef{
+															Name: "not-changing",
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
 				},
 			},
 		},
@@ -664,8 +845,23 @@ func (s *PluginCanarySuite) Test_handleCanary() {
 	vs.DeepCopyInto(&originalVs)
 	expectedVs := gwv1.VirtualService{}
 	vs.DeepCopyInto(&expectedVs)
+	expectedVs.Spec.GetVirtualHost().GetRoutes()[0].GetRouteAction().GetMulti().Destinations =
+		append(expectedVs.Spec.GetVirtualHost().GetRoutes()[0].GetRouteAction().GetMulti().Destinations,
+			&v1.WeightedDestination{
+				Destination: &v1.Destination{
+					DestinationType: &v1.Destination_Upstream{
+						Upstream: &core.ResourceRef{
+							Name: canarysvc,
+						},
+					},
+				},
+				Weight: wrapperspb.UInt32(uint32(20)),
+			})
 
 	for _, route := range expectedVs.Spec.GetVirtualHost().GetRoutes() {
+		if route.GetName() == "route3" {
+			continue
+		}
 		route.GetRouteAction().GetMulti().GetDestinations()[0].Weight =
 			&wrapperspb.UInt32Value{Value: uint32(100 - desiredWeight)}
 		route.GetRouteAction().GetMulti().GetDestinations()[1].Weight =
@@ -707,42 +903,12 @@ func (s *PluginCanarySuite) Test_handleCanary() {
 	assert.Equal(s.T(), &expectedVs, vs)
 }
 
-// stable service cannot be found in VS
-func (s *PluginCanarySuite) Test_handleCanary_ReturnErrorIfStableServiceNotInVs() {
-	vs := &gwv1.VirtualService{
-		Spec: gwv1.VirtualServiceSpec{
-			VirtualHost: &gwv1.VirtualHost{
-				Routes: []*gwv1.Route{
-					{
-						Action: &gwv1.Route_RouteAction{
-							RouteAction: &v1.RouteAction{
-								Destination: &v1.RouteAction_Multi{
-									Multi: &v1.MultiDestination{
-										Destinations: []*v1.WeightedDestination{
-											{
-												Destination: &v1.Destination{
-													DestinationType: &v1.Destination_Upstream{
-														Upstream: &core.ResourceRef{
-															Name: "canary",
-														},
-													},
-												},
-												Weight: wrapperspb.UInt32(uint32(10)),
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
+// getVirtualService() returns an error
+func (s *PluginCanarySuite) Test_handleCanary_ReturnErrorIfGetVirtualServiceReturnsError() {
 
 	// used in getVS()
-	vsclient.EXPECT().GetVirtualService(gomock.Any(), gomock.Any()).Times(1).Return(vs, nil)
-	// used in getVS() and handleCanary()
+	vsclient.EXPECT().GetVirtualService(gomock.Any(), gomock.Any()).Times(1).Return(nil, fmt.Errorf("boom"))
+	// used in getVS()
 	gwclient.EXPECT().VirtualServices().Return(vsclient).Times(1)
 
 	err := plugin.handleCanary(ctx,
@@ -764,71 +930,10 @@ func (s *PluginCanarySuite) Test_handleCanary_ReturnErrorIfStableServiceNotInVs(
 			},
 		})
 
-	assert.Error(s.T(), err)
-	assert.Contains(s.T(), err.Error(), "couldn't find stable and/or canary service in VirtualService")
+	assert.Error(s.T(), err, "boom")
 }
 
-// canary service cannot be found in VS
-func (s *PluginCanarySuite) Test_handleCanary_ReturnErrorIfCanaryServiceNotInVs() {
-	vs := &gwv1.VirtualService{
-		Spec: gwv1.VirtualServiceSpec{
-			VirtualHost: &gwv1.VirtualHost{
-				Routes: []*gwv1.Route{
-					{
-						Action: &gwv1.Route_RouteAction{
-							RouteAction: &v1.RouteAction{
-								Destination: &v1.RouteAction_Multi{
-									Multi: &v1.MultiDestination{
-										Destinations: []*v1.WeightedDestination{
-											{
-												Destination: &v1.Destination{
-													DestinationType: &v1.Destination_Upstream{
-														Upstream: &core.ResourceRef{
-															Name: "stable",
-														},
-													},
-												},
-												Weight: wrapperspb.UInt32(uint32(10)),
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	// used in getVS()
-	vsclient.EXPECT().GetVirtualService(gomock.Any(), gomock.Any()).Times(1).Return(vs, nil)
-	// used in getVS() and handleCanary()
-	gwclient.EXPECT().VirtualServices().Return(vsclient).Times(1)
-
-	err := plugin.handleCanary(ctx,
-		&v1alpha1.Rollout{
-			Spec: v1alpha1.RolloutSpec{
-				Strategy: v1alpha1.RolloutStrategy{
-					Canary: &v1alpha1.CanaryStrategy{
-						CanaryService: "canary",
-						StableService: "stable",
-					},
-				},
-			},
-		},
-		42,
-		[]v1alpha1.WeightDestination{},
-		&GlooEdgeTrafficRouting{
-			VirtualServiceSelector: &DumbObjectSelector{
-				Namespace: "testns", Name: "testvs",
-			},
-		})
-
-	assert.Error(s.T(), err)
-	assert.Contains(s.T(), err.Error(), "couldn't find stable and/or canary service in VirtualService")
-}
-
+// getDestinationsInVirtualService() returns an error
 func (s *PluginCanarySuite) Test_handleCanary_ReturnErrorIfGetDestionationsReturnsError() {
 	vs := &gwv1.VirtualService{
 		Spec: gwv1.VirtualServiceSpec{},
@@ -860,4 +965,320 @@ func (s *PluginCanarySuite) Test_handleCanary_ReturnErrorIfGetDestionationsRetur
 
 	assert.Error(s.T(), err)
 	assert.Contains(s.T(), err.Error(), "no virtual host or empty routes in VirtualSevice")
+}
+
+func (s *PluginCanarySuite) Test_handleCanary_UsingRouteTables() {
+
+	testns := "testns"
+	canarysvc := "canarysvc"
+	stablesvc := "stablesvc"
+	desiredWeight := int32(40)
+	route1 := "route-1"
+	route2 := "route-2"
+	labels := map[string]string{"label": "test-label"}
+
+	routeTableList := &gwv1.RouteTableList{
+		Items: []gwv1.RouteTable{
+			{
+				Spec: gwv1.RouteTableSpec{
+					Routes: []*gwv1.Route{
+						{
+							Name: route1,
+							Action: &gwv1.Route_RouteAction{
+								RouteAction: &v1.RouteAction{
+									Destination: &v1.RouteAction_Multi{
+										Multi: &v1.MultiDestination{
+											Destinations: []*v1.WeightedDestination{
+												{
+													Destination: &v1.Destination{
+														DestinationType: &v1.Destination_Upstream{
+															Upstream: &core.ResourceRef{
+																Name: stablesvc,
+															},
+														},
+													},
+													Weight: wrapperspb.UInt32(uint32(90)),
+												},
+												// canary destination will be created
+											},
+										},
+									},
+								},
+							},
+						},
+						{
+							Name: route2,
+							Action: &gwv1.Route_RouteAction{
+								RouteAction: &v1.RouteAction{
+									Destination: &v1.RouteAction_Multi{
+										Multi: &v1.MultiDestination{
+											Destinations: []*v1.WeightedDestination{
+												{
+													Destination: &v1.Destination{
+														DestinationType: &v1.Destination_Upstream{
+															Upstream: &core.ResourceRef{
+																Name: stablesvc,
+															},
+														},
+													},
+													Weight: wrapperspb.UInt32(uint32(80)),
+												},
+												{
+													Destination: &v1.Destination{
+														DestinationType: &v1.Destination_Upstream{
+															Upstream: &core.ResourceRef{
+																Name: canarysvc,
+															},
+														},
+													},
+													Weight: wrapperspb.UInt32(uint32(20)),
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+						{
+							// this route will remain unchanged
+							Name: "route3",
+							Action: &gwv1.Route_RouteAction{
+								RouteAction: &v1.RouteAction{
+									Destination: &v1.RouteAction_Multi{
+										Multi: &v1.MultiDestination{
+											Destinations: []*v1.WeightedDestination{
+												{
+													Destination: &v1.Destination{
+														DestinationType: &v1.Destination_Upstream{
+															Upstream: &core.ResourceRef{
+																Name: "not-changing",
+															},
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			{
+				Spec: gwv1.RouteTableSpec{
+					Routes: []*gwv1.Route{
+						{
+							Name: route2,
+							Action: &gwv1.Route_RouteAction{
+								RouteAction: &v1.RouteAction{
+									Destination: &v1.RouteAction_Multi{
+										Multi: &v1.MultiDestination{
+											Destinations: []*v1.WeightedDestination{
+												{
+													Destination: &v1.Destination{
+														DestinationType: &v1.Destination_Upstream{
+															Upstream: &core.ResourceRef{
+																Name: stablesvc,
+															},
+														},
+													},
+													Weight: wrapperspb.UInt32(uint32(90)),
+												},
+												// canary destination will be created
+											},
+										},
+									},
+								},
+							},
+						},
+						{
+							Name: route1,
+							Action: &gwv1.Route_RouteAction{
+								RouteAction: &v1.RouteAction{
+									Destination: &v1.RouteAction_Multi{
+										Multi: &v1.MultiDestination{
+											Destinations: []*v1.WeightedDestination{
+												{
+													Destination: &v1.Destination{
+														DestinationType: &v1.Destination_Upstream{
+															Upstream: &core.ResourceRef{
+																Name: stablesvc,
+															},
+														},
+													},
+													Weight: wrapperspb.UInt32(uint32(80)),
+												},
+												{
+													Destination: &v1.Destination{
+														DestinationType: &v1.Destination_Upstream{
+															Upstream: &core.ResourceRef{
+																Name: canarysvc,
+															},
+														},
+													},
+													Weight: wrapperspb.UInt32(uint32(20)),
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}}
+
+	expectedRts := make([]*gwv1.RouteTable, len(routeTableList.Items))
+	for i := range routeTableList.Items {
+		expected := &gwv1.RouteTable{}
+		routeTableList.Items[i].DeepCopyInto(expected)
+		expectedRts[i] = expected
+	}
+
+	expectedRts[0].Spec.GetRoutes()[0].GetRouteAction().GetMulti().Destinations =
+		append(expectedRts[0].Spec.GetRoutes()[0].GetRouteAction().GetMulti().Destinations,
+			&v1.WeightedDestination{
+				Destination: &v1.Destination{
+					DestinationType: &v1.Destination_Upstream{
+						Upstream: &core.ResourceRef{
+							Name: canarysvc,
+						},
+					},
+				},
+				Weight: wrapperspb.UInt32(uint32(20)),
+			})
+	expectedRts[1].Spec.GetRoutes()[0].GetRouteAction().GetMulti().Destinations =
+		append(expectedRts[1].Spec.GetRoutes()[0].GetRouteAction().GetMulti().Destinations,
+			&v1.WeightedDestination{
+				Destination: &v1.Destination{
+					DestinationType: &v1.Destination_Upstream{
+						Upstream: &core.ResourceRef{
+							Name: canarysvc,
+						},
+					},
+				},
+				Weight: wrapperspb.UInt32(uint32(20)),
+			})
+
+	for _, rt := range expectedRts {
+		for _, route := range rt.Spec.GetRoutes() {
+			if route.GetName() == "route3" {
+				continue
+			}
+
+			route.GetRouteAction().GetMulti().GetDestinations()[0].Weight =
+				&wrapperspb.UInt32Value{Value: uint32(100 - desiredWeight)}
+			route.GetRouteAction().GetMulti().GetDestinations()[1].Weight =
+				&wrapperspb.UInt32Value{Value: uint32(desiredWeight)}
+		}
+	}
+
+	// used in getRouteTables()
+	rtclient.EXPECT().ListRouteTable(gomock.Any(),
+		gomock.Eq(client.MatchingLabels(labels)),
+		gomock.Eq(client.InNamespace(testns))).Times(1).
+		Return(routeTableList, nil)
+	// used in getRouteTable() and handleCanaryUsingRouteTables()
+	gwclient.EXPECT().RouteTables().Return(rtclient).Times(3)
+	// used in handleCanaryUsingRouteTables()
+	rtclient.EXPECT().PatchRouteTable(
+		gomock.Any(),
+		gomock.Eq(expectedRts[0]),
+		gomock.Any()).Times(1)
+
+	rtclient.EXPECT().PatchRouteTable(
+		gomock.Any(),
+		gomock.Eq(expectedRts[1]),
+		gomock.Any()).Times(1)
+
+	err := plugin.handleCanary(ctx,
+		&v1alpha1.Rollout{
+			Spec: v1alpha1.RolloutSpec{
+				Strategy: v1alpha1.RolloutStrategy{
+					Canary: &v1alpha1.CanaryStrategy{
+						CanaryService: canarysvc,
+						StableService: stablesvc,
+					},
+				},
+			},
+		},
+		desiredWeight,
+		[]v1alpha1.WeightDestination{},
+		&GlooEdgeTrafficRouting{
+			Routes: []string{route1, route2},
+			RouteTableSelector: &DumbObjectSelector{
+				Namespace: testns,
+				Labels:    labels},
+		},
+	)
+
+	assert.NoError(s.T(), err)
+	for i := range routeTableList.Items {
+		assert.Equal(s.T(), expectedRts[i], &routeTableList.Items[i], fmt.Sprintf("items at index %d aren't equal", i))
+	}
+}
+
+// getVirtualService() returns an error
+func (s *PluginCanarySuite) Test_handleCanaryUsingRouteTables_ReturnErrorIfGetRouteTablesReturnsError() {
+
+	// used in getRouteTable()
+	rtclient.EXPECT().GetRouteTable(gomock.Any(), gomock.Any()).Times(1).Return(nil, fmt.Errorf("boom"))
+	// used in getRouteTable()
+	gwclient.EXPECT().RouteTables().Return(rtclient).Times(1)
+
+	err := plugin.handleCanary(ctx,
+		&v1alpha1.Rollout{
+			Spec: v1alpha1.RolloutSpec{
+				Strategy: v1alpha1.RolloutStrategy{
+					Canary: &v1alpha1.CanaryStrategy{
+						CanaryService: "canary",
+						StableService: "stable",
+					},
+				},
+			},
+		},
+		42,
+		[]v1alpha1.WeightDestination{},
+		&GlooEdgeTrafficRouting{
+			RouteTableSelector: &DumbObjectSelector{
+				Namespace: "testns", Name: "testvs",
+			},
+		})
+
+	assert.Error(s.T(), err, "boom")
+}
+
+func (s *PluginCanarySuite) Test_handleCanaryUsingRouteTables_ReturnErrorIfGetDestionationsReturnsError() {
+	vs := &gwv1.RouteTable{
+		Spec: gwv1.RouteTableSpec{},
+	}
+
+	// used in getVS()
+	rtclient.EXPECT().GetRouteTable(gomock.Any(), gomock.Any()).Times(1).Return(vs, nil)
+	// used in getRouteTable()
+	gwclient.EXPECT().RouteTables().Return(rtclient).Times(1)
+
+	err := plugin.handleCanary(ctx,
+		&v1alpha1.Rollout{
+			Spec: v1alpha1.RolloutSpec{
+				Strategy: v1alpha1.RolloutStrategy{
+					Canary: &v1alpha1.CanaryStrategy{
+						CanaryService: "canary",
+						StableService: "stable",
+					},
+				},
+			},
+		},
+		42,
+		[]v1alpha1.WeightDestination{},
+		&GlooEdgeTrafficRouting{
+			RouteTableSelector: &DumbObjectSelector{
+				Namespace: "testns", Name: "testvs",
+			},
+		})
+
+	assert.Error(s.T(), err)
+	assert.Contains(s.T(), err.Error(), "couldn't find stable services in RouteTables selected")
 }

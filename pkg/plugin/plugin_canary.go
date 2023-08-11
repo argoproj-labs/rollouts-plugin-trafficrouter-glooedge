@@ -51,6 +51,9 @@ func (r *RpcPlugin) handleCanaryUsingVirtualService(
 		return err
 	}
 
+	r.maybeCreateCanaryDestinations(
+		[]routeTableWithDestinations{{Destinations: allDestinations}}, getCanaryServiceName(rollout))
+
 	for _, dst := range allDestinations {
 		dst.Stable.Weight = &wrapperspb.UInt32Value{Value: uint32(100 - desiredWeight)}
 		dst.Canary.Weight = &wrapperspb.UInt32Value{Value: uint32(desiredWeight)}
@@ -80,6 +83,8 @@ func (r *RpcPlugin) handleCanaryUsingRouteTables(
 		return err
 	}
 
+	r.maybeCreateCanaryDestinations(allRouteTablesForCanary, getCanaryServiceName(rollout))
+
 	for _, rt := range allRouteTablesForCanary {
 		originalRt := &gwv1.RouteTable{}
 		rt.RouteTable.DeepCopyInto(originalRt)
@@ -95,6 +100,29 @@ func (r *RpcPlugin) handleCanaryUsingRouteTables(
 	}
 
 	return nil
+}
+
+func (r *RpcPlugin) maybeCreateCanaryDestinations(
+	routeTables []routeTableWithDestinations, canaryName string) {
+
+	for i := range routeTables {
+		for j := range routeTables[i].Destinations {
+			if routeTables[i].Destinations[j].Canary != nil {
+				continue
+			}
+			routeTables[i].Destinations[j].Canary =
+				r.newCanaryDestination(routeTables[i].Destinations[j].Stable, canaryName)
+			routeTables[i].Destinations[j].DestinationsParent.Destinations =
+				append(routeTables[i].Destinations[j].DestinationsParent.GetDestinations(), routeTables[i].Destinations[j].Canary)
+		}
+	}
+}
+
+func (r *RpcPlugin) newCanaryDestination(stableDst *v1.WeightedDestination, canaryName string) *v1.WeightedDestination {
+	ret := stableDst.Clone().(*v1.WeightedDestination)
+	ret.GetDestination().GetUpstream().Name = canaryName
+	ret.Weight = &wrapperspb.UInt32Value{Value: uint32(0)}
+	return ret
 }
 
 func (r *RpcPlugin) getDestinationsInVirtualService(
@@ -114,11 +142,11 @@ func (r *RpcPlugin) getDestinationsInVirtualService(
 	ret = r.getDestinationsInRoutes(vs.Spec.GetVirtualHost().GetRoutes(), rollout, pluginConfig)
 
 	if len(pluginConfig.Routes) > 0 && len(ret) != len(pluginConfig.Routes) {
-		return nil, fmt.Errorf("some/all routes specified in canary rollout configuration do not have stable/canary services")
+		return nil, fmt.Errorf("some/all routes specified in canary rollout configuration do not have stable upstreams")
 	}
 
 	if len(ret) == 0 {
-		return nil, fmt.Errorf("couldn't find stable and/or canary upstream in VirtualService %s/%s, with route names in %v",
+		return nil, fmt.Errorf("couldn't find stable upstreams in VirtualService %s/%s, with route names in %v",
 			pluginConfig.VirtualServiceSelector.Namespace, pluginConfig.VirtualServiceSelector.Name, pluginConfig.Routes)
 	}
 
@@ -126,8 +154,9 @@ func (r *RpcPlugin) getDestinationsInVirtualService(
 }
 
 type destinationPair struct {
-	Canary *v1.WeightedDestination
-	Stable *v1.WeightedDestination
+	DestinationsParent *v1.MultiDestination
+	Canary             *v1.WeightedDestination
+	Stable             *v1.WeightedDestination
 }
 
 type routeTableWithDestinations struct {
@@ -159,7 +188,7 @@ func (r *RpcPlugin) getDestinationsInRouteTables(
 	}
 
 	if len(ret) == 0 {
-		return nil, fmt.Errorf("couldn't find stable and/or canary services in RouteTables selected with Name: '%s', Namespace: '%s', Labels: %v, with route names in %v",
+		return nil, fmt.Errorf("couldn't find stable services in RouteTables selected with Name: '%s', Namespace: '%s', Labels: %v, with route names in %v",
 			pluginConfig.RouteTableSelector.Name, pluginConfig.RouteTableSelector.Namespace, pluginConfig.RouteTableSelector.Labels, pluginConfig.Routes)
 	}
 
@@ -188,14 +217,14 @@ func (r *RpcPlugin) getDestinationsInRoutes(
 				continue
 			}
 			name := dst.GetDestination().GetUpstream().GetName()
-			if strings.EqualFold(rollout.Spec.Strategy.Canary.CanaryService, name) {
+			if strings.EqualFold(getCanaryServiceName(rollout), name) {
 				canary = dst
-			} else if strings.EqualFold(rollout.Spec.Strategy.Canary.StableService, name) {
+			} else if strings.EqualFold(getStableServiceName(rollout), name) {
 				stable = dst
 			}
 		}
-		if stable != nil && canary != nil {
-			ret = append(ret, destinationPair{Stable: stable, Canary: canary})
+		if stable != nil {
+			ret = append(ret, destinationPair{DestinationsParent: r.GetRouteAction().GetMulti(), Stable: stable, Canary: canary})
 		}
 	}
 
