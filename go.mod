@@ -25,15 +25,11 @@ require (
 )
 
 require (
-	github.com/PaesslerAG/gval v1.2.2
-	github.com/PaesslerAG/jsonpath v0.1.1
-	github.com/ghodss/yaml v1.0.1-0.20190212211648-25d852aebe32
 	github.com/golang/mock v1.6.0
 	github.com/solo-io/solo-kit v0.31.0
 	github.com/stretchr/testify v1.8.2
 	golang.org/x/exp v0.0.0-20220921164117-439092de6870
 	google.golang.org/protobuf v1.30.0
-	k8s.io/apimachinery v0.25.8
 	k8s.io/client-go v0.25.8
 	sigs.k8s.io/controller-runtime v0.13.1
 )
@@ -80,7 +76,6 @@ require (
 	github.com/prometheus/common v0.42.0 // indirect
 	github.com/prometheus/procfs v0.9.0 // indirect
 	github.com/rotisserie/eris v0.4.0 // indirect
-	github.com/shopspring/decimal v1.3.1 // indirect
 	github.com/solo-io/go-utils v0.24.0 // indirect
 	github.com/solo-io/protoc-gen-ext v0.0.18 // indirect
 	github.com/solo-io/skv2 v0.29.2 // indirect
@@ -102,6 +97,7 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/api v0.25.8 // indirect
+	k8s.io/apimachinery v0.25.8 // indirect
 	k8s.io/component-base v0.25.8 // indirect
 	k8s.io/klog/v2 v2.80.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20221012153701-172d655c2280 // indirect
