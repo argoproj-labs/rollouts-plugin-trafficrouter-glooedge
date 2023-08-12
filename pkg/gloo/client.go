@@ -1,7 +1,7 @@
 package gloo
 
 import (
-	"github.com/argoproj-labs/rollouts-plugin-trafficrouter-glooedge/util"
+	"github.com/argoproj-labs/rollouts-plugin-trafficrouter-glooedge/pkg/util"
 	gloov1 "github.com/solo-io/solo-apis/pkg/api/gateway.solo.io/v1"
 )
 

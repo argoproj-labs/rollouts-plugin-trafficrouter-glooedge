@@ -11,19 +11,9 @@ release:
 
 .PHONY: glooedge-plugin-build
 glooedge-plugin-build:
-	CGO_ENABLED=0 GOOS=${GOOS} GOARCHP=${GOARCH} go build -v -o ${DIST_DIR}/${BIN_NAME} .
-
-.PHONY: dev
-dev:
-	kubectl create ns argo-rollouts || true
-	skaffold dev -n argo-rollouts --kube-context=kind-kind 
+	CGO_ENABLED=0 GOOS=${GOOS} GOARCH=${GOARCH} go build -v -o ${DIST_DIR}/${BIN_NAME} .
 
 .PHONY: install-rollouts
 install-rollouts:
 	kubectl create ns argo-rollouts || true
 	kubectl apply -k ./deploy
-
-.PHONY: demo
-demo:
-	make install-rollouts
-	kubectl apply -f ./examples/0-rollout-initial-state-green
