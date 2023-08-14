@@ -33,9 +33,7 @@ spec:
               namespace: echo
       steps:
         - setWeight: 10
-        - pause: {duration: 10m}
-        - setWeight: 20
         - pause: {}
-        - setWeight: 30
+        - setWeight: 90
         - pause: {}
 

@@ -14,7 +14,6 @@ spec:
         app: echo
     spec:
       containers:
-        # Shout out to our friends at Hashi for this useful test server
         - image: hashicorp/http-echo
           args:
             - "-text=version:v1"
@@ -97,11 +96,6 @@ spec:
                 name: echo-v1
                 namespace: echo
             weight: 100
-          - destination:
-              upstream:
-                name: echo-v2
-                namespace: echo
-            weight: 0
     - matchers:
       - prefix: /a/c
       name: route-c
@@ -140,11 +134,6 @@ spec:
                 name: echo-v1
                 namespace: echo
             weight: 100
-          - destination:
-              upstream:
-                name: echo-v2
-                namespace: echo
-            weight: 0
     - matchers:
       - prefix: /b/c
       name: route-c
