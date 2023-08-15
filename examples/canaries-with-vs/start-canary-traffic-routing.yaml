@@ -31,6 +31,9 @@ spec:
             virtualService:
               name: echo
               namespace: gloo-system
+            routes:
+              - route-a
+              - route-b
       steps:
         - setWeight: 10
         - pause: {}

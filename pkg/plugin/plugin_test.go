@@ -41,7 +41,89 @@ func TestPluginSuite(t *testing.T) {
 	suite.Run(t, new(PluginSuite))
 }
 
-func (s *PluginSuite) Test_getDestinationsInRoutes() {
+func (s *PluginSuite) Test_getDestinationsInRoutes_SingleDestination() {
+	stableUpstreamName := "stable-upstream"
+	canaryUpstreamName := "canary-upstream"
+
+	routes := []*gwv1.Route{
+		{
+			Name: "route-1",
+			Action: &gwv1.Route_RouteAction{
+				RouteAction: &v1.RouteAction{
+					Destination: &v1.RouteAction_Single{
+						Single: &v1.Destination{
+							DestinationType: &v1.Destination_Upstream{
+								Upstream: &core.ResourceRef{
+									Name: stableUpstreamName,
+								},
+							},
+						},
+					},
+				}},
+		},
+		{
+			Name: "route-2",
+			Action: &gwv1.Route_RouteAction{
+				RouteAction: &v1.RouteAction{
+					Destination: &v1.RouteAction_Single{
+						Single: &v1.Destination{
+							DestinationType: &v1.Destination_Upstream{
+								Upstream: &core.ResourceRef{
+									Name: stableUpstreamName,
+								},
+							},
+						},
+					},
+				}},
+		},
+		{
+			Name: "route-3",
+			Action: &gwv1.Route_RouteAction{
+				RouteAction: &v1.RouteAction{
+					Destination: &v1.RouteAction_Single{
+						Single: &v1.Destination{
+							DestinationType: &v1.Destination_Upstream{
+								Upstream: &core.ResourceRef{
+									Name: stableUpstreamName,
+								},
+							},
+						},
+					},
+				}},
+		},
+	}
+
+	dsts := s.plugin.getDestinationsInRoutes(
+		routes,
+		&v1alpha1.Rollout{
+			Spec: v1alpha1.RolloutSpec{
+				Strategy: v1alpha1.RolloutStrategy{
+					Canary: &v1alpha1.CanaryStrategy{
+						CanaryService: canaryUpstreamName,
+						StableService: stableUpstreamName,
+					},
+				},
+			},
+		},
+		&GlooEdgeTrafficRouting{
+			Routes: []string{"route-1", "route-2"},
+		})
+
+	assert.Len(s.T(), dsts, 2)
+	assert.Equal(s.T(), routes[0].GetRouteAction(), dsts[0].DestinationsParent)
+	assert.Equal(s.T(), &v1.WeightedDestination{
+		Destination: routes[1].GetRouteAction().GetSingle(),
+	}, dsts[0].Stable)
+	assert.Nil(s.T(), dsts[0].Canary)
+
+	assert.Equal(s.T(), routes[1].GetRouteAction(), dsts[1].DestinationsParent)
+	assert.Equal(s.T(), &v1.WeightedDestination{
+		Destination: routes[1].GetRouteAction().GetSingle(),
+	}, dsts[1].Stable)
+	assert.Nil(s.T(), dsts[1].Canary)
+}
+
+func (s *PluginSuite) Test_getDestinationsInRoutes_MultiDestination() {
 	stableUpstreamName := "stable-upstream"
 	canaryUpstreamName := "canary-upstream"
 
@@ -129,16 +211,16 @@ func (s *PluginSuite) Test_getDestinationsInRoutes() {
 		})
 
 	assert.Len(s.T(), dsts, 2)
-	assert.Equal(s.T(), routes[0].GetRouteAction().GetMulti().GetDestinations(), dsts[0].DestinationsParent.Destinations)
+	assert.Equal(s.T(), routes[0].GetRouteAction(), dsts[0].DestinationsParent)
 	assert.Equal(s.T(), routes[0].GetRouteAction().GetMulti().GetDestinations()[0], dsts[0].Stable)
 	assert.Equal(s.T(), routes[0].GetRouteAction().GetMulti().GetDestinations()[1], dsts[0].Canary)
 
-	assert.Equal(s.T(), routes[1].GetRouteAction().GetMulti().GetDestinations(), dsts[1].DestinationsParent.Destinations)
+	assert.Equal(s.T(), routes[1].GetRouteAction(), dsts[1].DestinationsParent)
 	assert.Equal(s.T(), routes[1].GetRouteAction().GetMulti().GetDestinations()[0], dsts[1].Stable)
 	assert.Nil(s.T(), dsts[1].Canary)
 }
 
-// skip route if any of RouteAction/MultiDestination/WeightedDestination/Destination/Upstream are missing
+// skip route if any of RouteAction/SingleDestination/MultiDestination/WeightedDestination/Destination/Upstream are missing
 // skip route if either canary or stable upstreams are missing
 // skip route if its name isn't in the list of routes (GlooEdgeTrafficRouting.Routes)
 //
@@ -161,7 +243,7 @@ func (s *PluginSuite) Test_getDestinationsInRoutes_SkipsWhenDestinationIsMissing
 			routes:      []*gwv1.Route{{Name: routeInList}},
 		},
 		{
-			description: "missing MultiDestination",
+			description: "missing SingleDestination and MultiDestination",
 			routes: []*gwv1.Route{{
 				Name: routeInList,
 				Action: &gwv1.Route_RouteAction{
@@ -197,7 +279,19 @@ func (s *PluginSuite) Test_getDestinationsInRoutes_SkipsWhenDestinationIsMissing
 			}},
 		},
 		{
-			description: "missing Upstream",
+			description: "missing Upstream in single",
+			routes: []*gwv1.Route{{
+				Name: routeInList,
+				Action: &gwv1.Route_RouteAction{
+					RouteAction: &v1.RouteAction{
+						Destination: &v1.RouteAction_Single{
+							Single: &v1.Destination{},
+						},
+					}},
+			}},
+		},
+		{
+			description: "missing Upstream in multi",
 			routes: []*gwv1.Route{{
 				Name: routeInList,
 				Action: &gwv1.Route_RouteAction{
@@ -270,8 +364,12 @@ func (s *PluginSuite) Test_maybeCreateCanaryDestinations() {
 		{
 			Destinations: []destinationPair{
 				{
-					DestinationsParent: &v1.MultiDestination{
-						Destinations: []*v1.WeightedDestination{},
+					DestinationsParent: &v1.RouteAction{
+						Destination: &v1.RouteAction_Multi{
+							Multi: &v1.MultiDestination{
+								Destinations: []*v1.WeightedDestination{},
+							},
+						},
 					},
 					Stable: &v1.WeightedDestination{
 						Destination: &v1.Destination{
@@ -286,8 +384,12 @@ func (s *PluginSuite) Test_maybeCreateCanaryDestinations() {
 					Canary: nil,
 				},
 				{
-					DestinationsParent: &v1.MultiDestination{
-						Destinations: []*v1.WeightedDestination{},
+					DestinationsParent: &v1.RouteAction{
+						Destination: &v1.RouteAction_Multi{
+							Multi: &v1.MultiDestination{
+								Destinations: []*v1.WeightedDestination{},
+							},
+						},
 					},
 					Stable: &v1.WeightedDestination{
 						Destination: &v1.Destination{
@@ -305,8 +407,12 @@ func (s *PluginSuite) Test_maybeCreateCanaryDestinations() {
 		{
 			Destinations: []destinationPair{
 				{
-					DestinationsParent: &v1.MultiDestination{
-						Destinations: []*v1.WeightedDestination{},
+					DestinationsParent: &v1.RouteAction{
+						Destination: &v1.RouteAction_Multi{
+							Multi: &v1.MultiDestination{
+								Destinations: []*v1.WeightedDestination{},
+							},
+						},
 					},
 					Stable: &v1.WeightedDestination{
 						Destination: &v1.Destination{
@@ -321,8 +427,12 @@ func (s *PluginSuite) Test_maybeCreateCanaryDestinations() {
 					Canary: nil,
 				},
 				{
-					DestinationsParent: &v1.MultiDestination{
-						Destinations: []*v1.WeightedDestination{},
+					DestinationsParent: &v1.RouteAction{
+						Destination: &v1.RouteAction_Multi{
+							Multi: &v1.MultiDestination{
+								Destinations: []*v1.WeightedDestination{},
+							},
+						},
 					},
 					Stable: &v1.WeightedDestination{
 						Destination: &v1.Destination{
@@ -343,11 +453,11 @@ func (s *PluginSuite) Test_maybeCreateCanaryDestinations() {
 
 	for i := 0; i < 2; i++ {
 		for j := 0; j < 2; j++ {
-			assert.Len(s.T(), rts[i].Destinations[j].DestinationsParent.GetDestinations(), 1)
+			assert.Len(s.T(), rts[i].Destinations[j].DestinationsParent.GetMulti().GetDestinations(), 1)
 			assert.NotNil(s.T(), rts[i].Destinations[j].Canary)
 			assert.Equal(s.T(), canarysvc, rts[i].Destinations[j].Canary.GetDestination().GetUpstream().GetName())
 			assert.Equal(s.T(), rts[i].Destinations[j].Canary,
-				rts[i].Destinations[j].DestinationsParent.GetDestinations()[0])
+				rts[i].Destinations[j].DestinationsParent.GetMulti().GetDestinations()[0])
 		}
 	}
 }

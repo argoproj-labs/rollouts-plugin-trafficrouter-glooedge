@@ -65,7 +65,8 @@ spec:
     - '*'
     routes:
     - matchers:
-      - prefix: /
+      - prefix: /a
+      name: route-a
       routeAction:
         multi:
           destinations:
@@ -74,6 +75,14 @@ spec:
                 name: echo-v1
                 namespace: echo
             weight: 100
+    - matchers:
+      - prefix: /b
+      name: route-b
+      routeAction:
+        single:
+          upstream:
+            name: echo-v1
+            namespace: echo
 ---
 apiVersion: apps/v1
 kind: Deployment

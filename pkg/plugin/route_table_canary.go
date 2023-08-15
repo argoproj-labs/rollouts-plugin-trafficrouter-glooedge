@@ -27,6 +27,7 @@ func (r *RpcPlugin) handleCanaryUsingRouteTables(
 		return err
 	}
 
+	r.maybeConvertSingleToMulti(allRouteTablesForCanary)
 	r.maybeCreateCanaryDestinations(allRouteTablesForCanary, getCanaryServiceName(rollout))
 
 	for _, rt := range allRouteTablesForCanary {

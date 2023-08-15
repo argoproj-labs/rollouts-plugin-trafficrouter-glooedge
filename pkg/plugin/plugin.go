@@ -41,7 +41,7 @@ type DumbObjectSelector struct {
 }
 
 type destinationPair struct {
-	DestinationsParent *v1.MultiDestination
+	DestinationsParent *v1.RouteAction
 	Canary             *v1.WeightedDestination
 	Stable             *v1.WeightedDestination
 }
@@ -144,6 +144,23 @@ func getCanaryServiceName(rollout *v1alpha1.Rollout) string {
 	return rollout.Spec.Strategy.Canary.CanaryService
 }
 
+func (r *RpcPlugin) maybeConvertSingleToMulti(routeTables []routeTableWithDestinations) {
+	for i := range routeTables {
+		for j := range routeTables[i].Destinations {
+			if routeTables[i].Destinations[j].DestinationsParent.GetMulti() != nil {
+				continue
+			}
+			routeTables[i].Destinations[j].DestinationsParent.Destination = &v1.RouteAction_Multi{
+				Multi: &v1.MultiDestination{
+					Destinations: []*v1.WeightedDestination{
+						routeTables[i].Destinations[j].Stable,
+					},
+				},
+			}
+		}
+	}
+}
+
 func (r *RpcPlugin) maybeCreateCanaryDestinations(
 	routeTables []routeTableWithDestinations, canaryName string) {
 
@@ -154,8 +171,8 @@ func (r *RpcPlugin) maybeCreateCanaryDestinations(
 			}
 			routeTables[i].Destinations[j].Canary =
 				r.newCanaryDestination(routeTables[i].Destinations[j].Stable, canaryName)
-			routeTables[i].Destinations[j].DestinationsParent.Destinations =
-				append(routeTables[i].Destinations[j].DestinationsParent.GetDestinations(), routeTables[i].Destinations[j].Canary)
+			routeTables[i].Destinations[j].DestinationsParent.GetMulti().Destinations =
+				append(routeTables[i].Destinations[j].DestinationsParent.GetMulti().GetDestinations(), routeTables[i].Destinations[j].Canary)
 		}
 	}
 }
@@ -172,32 +189,65 @@ func (r *RpcPlugin) getDestinationsInRoutes(
 	rollout *v1alpha1.Rollout,
 	pluginConfig *GlooEdgeTrafficRouting) (ret []destinationPair) {
 
-	for _, r := range routes {
-		if len(pluginConfig.Routes) > 0 && !slices.Contains(pluginConfig.Routes, r.GetName()) {
+	for _, route := range routes {
+		if len(pluginConfig.Routes) > 0 && !slices.Contains(pluginConfig.Routes, route.GetName()) {
 			continue
 		}
 
-		if r.GetRouteAction() == nil || r.GetRouteAction().GetMulti() == nil ||
-			r.GetRouteAction().GetMulti().GetDestinations() == nil {
+		if route.GetRouteAction() == nil ||
+			(route.GetRouteAction().GetMulti() == nil && route.GetRouteAction().GetSingle() == nil) {
 			continue
 		}
 
-		var stable, canary *v1.WeightedDestination
-		for _, dst := range r.GetRouteAction().GetMulti().GetDestinations() {
-			if dst.GetDestination() == nil || dst.GetDestination().GetUpstream() == nil ||
-				dst.GetDestination().GetUpstream().GetName() == "" {
-				continue
-			}
-			name := dst.GetDestination().GetUpstream().GetName()
-			if strings.EqualFold(getCanaryServiceName(rollout), name) {
-				canary = dst
-			} else if strings.EqualFold(getStableServiceName(rollout), name) {
-				stable = dst
-			}
+		if route.GetRouteAction().GetSingle() != nil {
+			ret = append(ret, r.getDestinationInSingle(route, rollout)...)
+			continue
 		}
-		if stable != nil {
-			ret = append(ret, destinationPair{DestinationsParent: r.GetRouteAction().GetMulti(), Stable: stable, Canary: canary})
+
+		if route.GetRouteAction().GetMulti().GetDestinations() == nil {
+			continue
 		}
+		ret = append(ret, r.getDestinationsInMulti(route, rollout)...)
+	}
+
+	return ret
+}
+
+func (r *RpcPlugin) getDestinationsInMulti(route *gwv1.Route, rollout *v1alpha1.Rollout) (ret []destinationPair) {
+	var stable, canary *v1.WeightedDestination
+	for _, dst := range route.GetRouteAction().GetMulti().GetDestinations() {
+		if dst.GetDestination() == nil || dst.GetDestination().GetUpstream() == nil ||
+			dst.GetDestination().GetUpstream().GetName() == "" {
+			continue
+		}
+		name := dst.GetDestination().GetUpstream().GetName()
+		if strings.EqualFold(getCanaryServiceName(rollout), name) {
+			canary = dst
+		} else if strings.EqualFold(getStableServiceName(rollout), name) {
+			stable = dst
+		}
+	}
+	if stable != nil {
+		ret = append(ret, destinationPair{DestinationsParent: route.GetRouteAction(), Stable: stable, Canary: canary})
+	}
+
+	return ret
+}
+
+// We will be converting `single` RouteAction to a `multi` one that will use WeightedDestinations created here
+func (r *RpcPlugin) getDestinationInSingle(route *gwv1.Route, rollout *v1alpha1.Rollout) (ret []destinationPair) {
+	var stable *v1.WeightedDestination
+
+	dst := route.GetRouteAction().GetSingle()
+	if dst.GetUpstream() == nil || dst.GetUpstream().GetName() == "" {
+		return ret
+	}
+
+	if strings.EqualFold(getStableServiceName(rollout), dst.GetUpstream().GetName()) {
+		stable = &v1.WeightedDestination{
+			Destination: dst,
+		}
+		ret = append(ret, destinationPair{DestinationsParent: route.GetRouteAction(), Stable: stable})
 	}
 
 	return ret

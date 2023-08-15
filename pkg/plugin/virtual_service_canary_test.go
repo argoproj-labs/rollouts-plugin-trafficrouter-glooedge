@@ -436,6 +436,7 @@ func (s *VirtualServiceCanarySuite) Test_handleCanary_UsingVirtualService() {
 	desiredWeight := int32(40)
 	route1 := "route-1"
 	route2 := "route-2"
+	route3 := "route-3"
 
 	vs := &gwv1.VirtualService{
 		Spec: gwv1.VirtualServiceSpec{
@@ -499,8 +500,25 @@ func (s *VirtualServiceCanarySuite) Test_handleCanary_UsingVirtualService() {
 						},
 					},
 					{
+						// single destination in this route will be converted to a multi one
+						Name: route3,
+						Action: &gwv1.Route_RouteAction{
+							RouteAction: &v1.RouteAction{
+								Destination: &v1.RouteAction_Single{
+									Single: &v1.Destination{
+										DestinationType: &v1.Destination_Upstream{
+											Upstream: &core.ResourceRef{
+												Name: stablesvc,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+					{
 						// this route will remain unchanged
-						Name: "route3",
+						Name: "route4",
 						Action: &gwv1.Route_RouteAction{
 							RouteAction: &v1.RouteAction{
 								Destination: &v1.RouteAction_Multi{
@@ -514,6 +532,7 @@ func (s *VirtualServiceCanarySuite) Test_handleCanary_UsingVirtualService() {
 														},
 													},
 												},
+												Weight: wrapperspb.UInt32(uint32(42)),
 											},
 										},
 									},
@@ -544,13 +563,33 @@ func (s *VirtualServiceCanarySuite) Test_handleCanary_UsingVirtualService() {
 			})
 
 	for _, route := range expectedVs.Spec.GetVirtualHost().GetRoutes() {
-		if route.GetName() == "route3" {
+		if route.GetName() == route3 || route.GetName() == "route4" {
 			continue
 		}
 		route.GetRouteAction().GetMulti().GetDestinations()[0].Weight =
-			&wrapperspb.UInt32Value{Value: uint32(100 - desiredWeight)}
+			wrapperspb.UInt32(uint32(100 - desiredWeight))
 		route.GetRouteAction().GetMulti().GetDestinations()[1].Weight =
-			&wrapperspb.UInt32Value{Value: uint32(desiredWeight)}
+			wrapperspb.UInt32(uint32(desiredWeight))
+	}
+	expectedVs.Spec.GetVirtualHost().GetRoutes()[2].GetRouteAction().Destination = &v1.RouteAction_Multi{
+		Multi: &v1.MultiDestination{
+			Destinations: []*v1.WeightedDestination{
+				{
+					Destination: expectedVs.Spec.GetVirtualHost().GetRoutes()[2].GetRouteAction().GetSingle(),
+					Weight:      wrapperspb.UInt32(uint32(100 - desiredWeight)),
+				},
+				{
+					Destination: &v1.Destination{
+						DestinationType: &v1.Destination_Upstream{
+							Upstream: &core.ResourceRef{
+								Name: canarysvc,
+							},
+						},
+					},
+					Weight: wrapperspb.UInt32(uint32(desiredWeight)),
+				},
+			},
+		},
 	}
 
 	// used in getVS()
@@ -565,7 +604,7 @@ func (s *VirtualServiceCanarySuite) Test_handleCanary_UsingVirtualService() {
 		gomock.Any())
 
 	filterConfig, err := json.Marshal(GlooEdgeTrafficRouting{
-		Routes: []string{route1, route2},
+		Routes: []string{route1, route2, route3},
 		VirtualServiceSelector: &DumbObjectSelector{
 			Namespace: testns, Name: testvs,
 		}})

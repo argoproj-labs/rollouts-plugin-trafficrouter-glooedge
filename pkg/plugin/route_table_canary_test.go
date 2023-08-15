@@ -55,6 +55,7 @@ func (s *RouteTableCanarySuite) Test_handleCanary_UsingRouteTables() {
 	desiredWeight := int32(40)
 	route1 := "route-1"
 	route2 := "route-2"
+	route3 := "route-3"
 	labels := map[string]string{"label": "test-label"}
 
 	routeTableList := &gwv1.RouteTableList{
@@ -120,8 +121,25 @@ func (s *RouteTableCanarySuite) Test_handleCanary_UsingRouteTables() {
 							},
 						},
 						{
+							// single destination will be converted to multi
+							Name: route3,
+							Action: &gwv1.Route_RouteAction{
+								RouteAction: &v1.RouteAction{
+									Destination: &v1.RouteAction_Single{
+										Single: &v1.Destination{
+											DestinationType: &v1.Destination_Upstream{
+												Upstream: &core.ResourceRef{
+													Name: stablesvc,
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+						{
 							// this route will remain unchanged
-							Name: "route3",
+							Name: "route4",
 							Action: &gwv1.Route_RouteAction{
 								RouteAction: &v1.RouteAction{
 									Destination: &v1.RouteAction_Multi{
@@ -241,10 +259,31 @@ func (s *RouteTableCanarySuite) Test_handleCanary_UsingRouteTables() {
 				},
 				Weight: wrapperspb.UInt32(uint32(20)),
 			})
+	expectedRts[0].Spec.GetRoutes()[2].GetRouteAction().Destination =
+		&v1.RouteAction_Multi{
+			Multi: &v1.MultiDestination{
+				Destinations: []*v1.WeightedDestination{
+					{
+						Destination: expectedRts[0].Spec.GetRoutes()[2].GetRouteAction().GetSingle(),
+						Weight:      wrapperspb.UInt32(uint32(100 - desiredWeight)),
+					},
+					{
+						Destination: &v1.Destination{
+							DestinationType: &v1.Destination_Upstream{
+								Upstream: &core.ResourceRef{
+									Name: canarysvc,
+								},
+							},
+						},
+						Weight: wrapperspb.UInt32(uint32(desiredWeight)),
+					},
+				},
+			},
+		}
 
 	for _, rt := range expectedRts {
 		for _, route := range rt.Spec.GetRoutes() {
-			if route.GetName() == "route3" {
+			if route.GetName() == "route4" {
 				continue
 			}
 
@@ -274,7 +313,7 @@ func (s *RouteTableCanarySuite) Test_handleCanary_UsingRouteTables() {
 		gomock.Any()).Times(1)
 
 	filterConfig, err := json.Marshal(GlooEdgeTrafficRouting{
-		Routes: []string{route1, route2},
+		Routes: []string{route1, route2, route3},
 		RouteTableSelector: &DumbObjectSelector{
 			Namespace: testns,
 			Labels:    labels},

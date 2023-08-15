@@ -127,13 +127,10 @@ spec:
       - prefix: /b/b
       name: route-b
       routeAction:
-        multi:
-          destinations:
-          - destination:
-              upstream:
-                name: echo-v1
-                namespace: echo
-            weight: 100
+        single:
+          upstream:
+            name: echo-v1
+            namespace: echo
     - matchers:
       - prefix: /b/c
       name: route-c

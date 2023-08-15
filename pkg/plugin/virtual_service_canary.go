@@ -30,6 +30,7 @@ func (r *RpcPlugin) handleCanaryUsingVirtualService(
 		return err
 	}
 
+	r.maybeConvertSingleToMulti([]routeTableWithDestinations{{Destinations: allDestinations}})
 	r.maybeCreateCanaryDestinations(
 		[]routeTableWithDestinations{{Destinations: allDestinations}}, getCanaryServiceName(rollout))
 
