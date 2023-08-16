@@ -1,6 +1,6 @@
 module github.com/argoproj-labs/rollouts-plugin-trafficrouter-glooedge
 
-go 1.19
+go 1.20
 
 replace (
 	github.com/docker/docker => github.com/moby/moby v0.7.3-0.20190826074503-38ab9da00309
