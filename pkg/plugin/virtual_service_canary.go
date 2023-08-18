@@ -51,7 +51,7 @@ func (r *RpcPlugin) getDestinationsInVirtualService(
 	pluginConfig *GlooEdgeTrafficRouting,
 	vs *gwv1.VirtualService) (ret []destinationPair, error error) {
 
-	if vs.Spec.GetVirtualHost() == nil || vs.Spec.GetVirtualHost().GetRoutes() == nil {
+	if vs.Spec.GetVirtualHost().GetRoutes() == nil {
 		return nil, fmt.Errorf("no virtual host or empty routes in VirtualSevice %s:%s",
 			pluginConfig.VirtualServiceSelector.Namespace, pluginConfig.VirtualServiceSelector.Name)
 	}

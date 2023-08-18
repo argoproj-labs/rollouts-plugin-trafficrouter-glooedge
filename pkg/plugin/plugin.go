@@ -29,9 +29,14 @@ type RpcPlugin struct {
 }
 
 type GlooEdgeTrafficRouting struct {
-	RouteTableSelector     *DumbObjectSelector `json:"routeTable" protobuf:"bytes,1,name=routeTable"`
+	// RouteTables to use for a canary rollout. Weights on selected routes (see `Routes` field) in these RTs
+	// will be changing during the rollout.
+	RouteTableSelector *DumbObjectSelector `json:"routeTable" protobuf:"bytes,1,name=routeTable"`
+	// The VirtualService to use for a canary rollout. Weights on selected routes (see `Routes` field) in this VS
+	// will be changing during the rollout. Note that Labels field is not used for selection of VS.
 	VirtualServiceSelector *DumbObjectSelector `json:"virtualService" protobuf:"bytes,2,name=virtualService"`
-	Routes                 []string            `json:"routes" protobuf:"bytes,3,name=routes"`
+	// The names of routes to use when a destination has more than one. All routes listed here must be present.
+	Routes []string `json:"routes" protobuf:"bytes,3,name=routes"`
 }
 
 type DumbObjectSelector struct {
@@ -75,6 +80,11 @@ func (r *RpcPlugin) SetWeight(
 	additionalDestinations []v1alpha1.WeightDestination) pluginTypes.RpcError {
 
 	ctx := context.TODO()
+	if getStableServiceName(rollout) == "" || getCanaryServiceName(rollout) == "" {
+		return pluginTypes.RpcError{
+			ErrorString: "stableService and/or canaryService fields of canary strategy must be set",
+		}
+	}
 	glooPluginConfig, err := getPluginConfig(rollout)
 	if err != nil {
 		return pluginTypes.RpcError{
@@ -89,7 +99,7 @@ func (r *RpcPlugin) SetWeight(
 		}
 	}
 
-	if rollout.Spec.Strategy.Canary != nil && glooPluginConfig.VirtualServiceSelector != nil {
+	if glooPluginConfig.VirtualServiceSelector != nil {
 		err = r.handleCanaryUsingVirtualService(ctx, rollout, desiredWeight, additionalDestinations, glooPluginConfig)
 	} else {
 		err = r.handleCanaryUsingRouteTables(ctx, rollout, desiredWeight, additionalDestinations, glooPluginConfig)
@@ -128,6 +138,9 @@ func (r *RpcPlugin) Type() string {
 func getPluginConfig(rollout *v1alpha1.Rollout) (*GlooEdgeTrafficRouting, error) {
 	glooplatformConfig := GlooEdgeTrafficRouting{}
 
+	if rollout.Spec.Strategy.Canary.TrafficRouting == nil {
+		return nil, fmt.Errorf("trafficRouting configuration is missing in canary strategy")
+	}
 	err := json.Unmarshal(rollout.Spec.Strategy.Canary.TrafficRouting.Plugins[PluginName], &glooplatformConfig)
 	if err != nil {
 		return nil, err
@@ -167,6 +180,7 @@ func (r *RpcPlugin) maybeCreateCanaryDestinations(
 	for i := range routeTables {
 		for j := range routeTables[i].Destinations {
 			if routeTables[i].Destinations[j].Canary != nil {
+				// No need to recreate a canary destination if it already exists
 				continue
 			}
 			routeTables[i].Destinations[j].Canary =
@@ -204,10 +218,9 @@ func (r *RpcPlugin) getDestinationsInRoutes(
 			continue
 		}
 
-		if route.GetRouteAction().GetMulti().GetDestinations() == nil {
-			continue
+		if route.GetRouteAction().GetMulti().GetDestinations() != nil {
+			ret = append(ret, r.getDestinationsInMulti(route, rollout)...)
 		}
-		ret = append(ret, r.getDestinationsInMulti(route, rollout)...)
 	}
 
 	return ret
@@ -216,7 +229,7 @@ func (r *RpcPlugin) getDestinationsInRoutes(
 func (r *RpcPlugin) getDestinationsInMulti(route *gwv1.Route, rollout *v1alpha1.Rollout) (ret []destinationPair) {
 	var stable, canary *v1.WeightedDestination
 	for _, dst := range route.GetRouteAction().GetMulti().GetDestinations() {
-		if dst.GetDestination() == nil || dst.GetDestination().GetUpstream() == nil ||
+		if dst.GetDestination().GetUpstream() == nil ||
 			dst.GetDestination().GetUpstream().GetName() == "" {
 			continue
 		}

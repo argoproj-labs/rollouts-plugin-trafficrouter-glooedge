@@ -461,3 +461,16 @@ func (s *PluginSuite) Test_maybeCreateCanaryDestinations() {
 		}
 	}
 }
+
+// check that we bail if stableService and/or canaryService aren't set
+func (s *PluginSuite) Test_SetWeight_ReturnsErrorWhenServiceNamesAreEmpty() {
+	err := s.plugin.SetWeight(&v1alpha1.Rollout{
+		Spec: v1alpha1.RolloutSpec{
+			Strategy: v1alpha1.RolloutStrategy{
+				Canary: &v1alpha1.CanaryStrategy{},
+			}}},
+		0, []v1alpha1.WeightDestination{})
+
+	assert.NotNil(s.T(), err)
+	assert.Contains(s.T(), err.ErrorString, "stableService and/or canaryService fields of canary strategy must be set")
+}
