@@ -10,9 +10,10 @@ import (
 	"github.com/argoproj/argo-rollouts/pkg/apis/rollouts/v1alpha1"
 	pluginTypes "github.com/argoproj/argo-rollouts/utils/plugin/types"
 	"github.com/sirupsen/logrus"
-	gloov1 "github.com/solo-io/solo-apis/pkg/api/gateway.solo.io/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	k8sclient "sigs.k8s.io/controller-runtime/pkg/client"
+	gwv1 "github.com/solo-io/solo-apis/pkg/api/gateway.solo.io/v1"
+	v1 "github.com/solo-io/solo-apis/pkg/api/gloo.solo.io/v1"
+	"golang.org/x/exp/slices"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 const (
@@ -28,7 +29,14 @@ type RpcPlugin struct {
 }
 
 type GlooEdgeTrafficRouting struct {
-	RouteTableSelector *DumbObjectSelector `json:"routeTableSelector" protobuf:"bytes,1,name=routeTableSelector"`
+	// RouteTables to use for a canary rollout. Weights on selected routes (see `Routes` field) in these RTs
+	// will be changing during the rollout.
+	RouteTableSelector *DumbObjectSelector `json:"routeTable" protobuf:"bytes,1,name=routeTable"`
+	// The VirtualService to use for a canary rollout. Weights on selected routes (see `Routes` field) in this VS
+	// will be changing during the rollout. Note that Labels field is not used for selection of VS.
+	VirtualServiceSelector *DumbObjectSelector `json:"virtualService" protobuf:"bytes,2,name=virtualService"`
+	// The names of routes to use when a destination has more than one. All routes listed here must be present.
+	Routes []string `json:"routes" protobuf:"bytes,3,name=routes"`
 }
 
 type DumbObjectSelector struct {
@@ -37,15 +45,15 @@ type DumbObjectSelector struct {
 	Namespace string            `json:"namespace" protobuf:"bytes,3,name=namespace"`
 }
 
-type GlooMatchedRouteTable struct {
-	// matched gloo platform route table
-	RouteTable *gloov1.RouteTable
-	// matched http routes within the routetable
-	// HttpRoutes []*GlooMatchedHttpRoutes
-	// // matched tcp routes within the routetable
-	// TCPRoutes []*GlooMatchedTCPRoutes
-	// // matched tls routes within the routetable
-	// TLSRoutes []*GlooMatchedTLSRoutes
+type destinationPair struct {
+	DestinationsParent *v1.RouteAction
+	Canary             *v1.WeightedDestination
+	Stable             *v1.WeightedDestination
+}
+
+type routeTableWithDestinations struct {
+	RouteTable   *gwv1.RouteTable
+	Destinations []destinationPair
 }
 
 func (r *RpcPlugin) InitPlugin() pluginTypes.RpcError {
@@ -66,8 +74,17 @@ func (r *RpcPlugin) UpdateHash(rollout *v1alpha1.Rollout, canaryHash, stableHash
 	return pluginTypes.RpcError{}
 }
 
-func (r *RpcPlugin) SetWeight(rollout *v1alpha1.Rollout, desiredWeight int32, additionalDestinations []v1alpha1.WeightDestination) pluginTypes.RpcError {
+func (r *RpcPlugin) SetWeight(
+	rollout *v1alpha1.Rollout,
+	desiredWeight int32,
+	additionalDestinations []v1alpha1.WeightDestination) pluginTypes.RpcError {
+
 	ctx := context.TODO()
+	if getStableServiceName(rollout) == "" || getCanaryServiceName(rollout) == "" {
+		return pluginTypes.RpcError{
+			ErrorString: "stableService and/or canaryService fields of canary strategy must be set",
+		}
+	}
 	glooPluginConfig, err := getPluginConfig(rollout)
 	if err != nil {
 		return pluginTypes.RpcError{
@@ -75,10 +92,23 @@ func (r *RpcPlugin) SetWeight(rollout *v1alpha1.Rollout, desiredWeight int32, ad
 		}
 	}
 
-	if rollout.Spec.Strategy.Canary != nil {
-		return r.handleCanary(ctx, rollout, desiredWeight, additionalDestinations, glooPluginConfig)
-	} else if rollout.Spec.Strategy.BlueGreen != nil {
-		return r.handleBlueGreen(rollout, glooPluginConfig)
+	if (glooPluginConfig.VirtualServiceSelector == nil && glooPluginConfig.RouteTableSelector == nil) ||
+		(glooPluginConfig.VirtualServiceSelector != nil && glooPluginConfig.RouteTableSelector != nil) {
+		return pluginTypes.RpcError{
+			ErrorString: "one of virtualService or routeTable selectors must be set in solo-io/glooedge plugin configuration",
+		}
+	}
+
+	if glooPluginConfig.VirtualServiceSelector != nil {
+		err = r.handleCanaryUsingVirtualService(ctx, rollout, desiredWeight, glooPluginConfig)
+	} else {
+		err = r.handleCanaryUsingRouteTables(ctx, rollout, desiredWeight, glooPluginConfig)
+	}
+
+	if err != nil {
+		return pluginTypes.RpcError{
+			ErrorString: fmt.Sprintf("failed canary rollout: %s", err),
+		}
 	}
 
 	return pluginTypes.RpcError{}
@@ -93,7 +123,7 @@ func (r *RpcPlugin) SetMirrorRoute(rollout *v1alpha1.Rollout, setMirrorRoute *v1
 }
 
 func (r *RpcPlugin) VerifyWeight(rollout *v1alpha1.Rollout, desiredWeight int32, additionalDestinations []v1alpha1.WeightDestination) (pluginTypes.RpcVerified, pluginTypes.RpcError) {
-	return pluginTypes.Verified, pluginTypes.RpcError{}
+	return pluginTypes.NotImplemented, pluginTypes.RpcError{}
 }
 
 func (r *RpcPlugin) RemoveManagedRoutes(rollout *v1alpha1.Rollout) pluginTypes.RpcError {
@@ -108,6 +138,9 @@ func (r *RpcPlugin) Type() string {
 func getPluginConfig(rollout *v1alpha1.Rollout) (*GlooEdgeTrafficRouting, error) {
 	glooplatformConfig := GlooEdgeTrafficRouting{}
 
+	if rollout.Spec.Strategy.Canary.TrafficRouting == nil {
+		return nil, fmt.Errorf("trafficRouting configuration is missing in canary strategy")
+	}
 	err := json.Unmarshal(rollout.Spec.Strategy.Canary.TrafficRouting.Plugins[PluginName], &glooplatformConfig)
 	if err != nil {
 		return nil, err
@@ -116,142 +149,119 @@ func getPluginConfig(rollout *v1alpha1.Rollout) (*GlooEdgeTrafficRouting, error)
 	return &glooplatformConfig, nil
 }
 
-func (r *RpcPlugin) getRouteTables(ctx context.Context, rollout *v1alpha1.Rollout, pluginConfig *GlooEdgeTrafficRouting) ([]*GlooMatchedRouteTable, error) {
-	if pluginConfig.RouteTableSelector == nil {
-		return nil, fmt.Errorf("routeTable selector is required")
-	}
-
-	if strings.EqualFold(pluginConfig.RouteTableSelector.Namespace, "") {
-		r.LogCtx.Debugf("defaulting routeTableSelector namespace to Rollout namespace %s for rollout %s", rollout.Namespace, rollout.Name)
-		pluginConfig.RouteTableSelector.Namespace = rollout.Namespace
-	}
-
-	var rts []*gloov1.RouteTable
-
-	if !strings.EqualFold(pluginConfig.RouteTableSelector.Name, "") {
-		r.LogCtx.Debugf("getRouteTables using ns:name ref %s:%s to get single table", pluginConfig.RouteTableSelector.Name, pluginConfig.RouteTableSelector.Namespace)
-		result, err := r.Client.RouteTables().GetRouteTable(ctx, pluginConfig.RouteTableSelector.Name, pluginConfig.RouteTableSelector.Namespace)
-		if err != nil {
-			return nil, err
-		}
-
-		r.LogCtx.Debugf("getRouteTables using ns:name ref %s:%s found 1 table", pluginConfig.RouteTableSelector.Name, pluginConfig.RouteTableSelector.Namespace)
-		rts = append(rts, result)
-	} else {
-		opts := &k8sclient.ListOptions{}
-
-		if pluginConfig.RouteTableSelector.Labels != nil {
-			opts.LabelSelector = labels.SelectorFromSet(pluginConfig.RouteTableSelector.Labels)
-		}
-		if !strings.EqualFold(pluginConfig.RouteTableSelector.Namespace, "") {
-			opts.Namespace = pluginConfig.RouteTableSelector.Namespace
-		}
-
-		r.LogCtx.Debugf("getRouteTables listing tables with opts %+v", opts)
-		var err error
-
-		rts, err = r.Client.RouteTables().ListRouteTables(ctx, opts)
-		if err != nil {
-			return nil, err
-		}
-		r.LogCtx.Debugf("getRouteTables listing tables with opts %+v; found %d routeTables", opts, len(rts))
-	}
-
-	matched := []*GlooMatchedRouteTable{}
-
-	for _, rt := range rts {
-		matchedRt := &GlooMatchedRouteTable{
-			RouteTable: rt,
-		}
-		// destination matching
-		if err := matchedRt.matchRoutes(r.LogCtx, rollout, pluginConfig); err != nil {
-			return nil, err
-		}
-
-		matched = append(matched, matchedRt)
-	}
-
-	return matched, nil
+func getStableServiceName(rollout *v1alpha1.Rollout) string {
+	return rollout.Spec.Strategy.Canary.StableService
 }
 
-func (g *GlooMatchedRouteTable) matchRoutes(logCtx *logrus.Entry, rollout *v1alpha1.Rollout, pluginConfig *GlooEdgeTrafficRouting) error {
-	if g.RouteTable == nil {
-		return fmt.Errorf("matchRoutes called for nil RouteTable")
+func getCanaryServiceName(rollout *v1alpha1.Rollout) string {
+	return rollout.Spec.Strategy.Canary.CanaryService
+}
+
+func (r *RpcPlugin) maybeConvertSingleToMulti(routeTables []routeTableWithDestinations) {
+	for i := range routeTables {
+		for j := range routeTables[i].Destinations {
+			if routeTables[i].Destinations[j].DestinationsParent.GetMulti() != nil {
+				continue
+			}
+			routeTables[i].Destinations[j].DestinationsParent.Destination = &v1.RouteAction_Multi{
+				Multi: &v1.MultiDestination{
+					Destinations: []*v1.WeightedDestination{
+						routeTables[i].Destinations[j].Stable,
+					},
+				},
+			}
+		}
+	}
+}
+
+func (r *RpcPlugin) maybeCreateCanaryDestinations(
+	routeTables []routeTableWithDestinations, canaryName string) {
+
+	for i := range routeTables {
+		for j := range routeTables[i].Destinations {
+			if routeTables[i].Destinations[j].Canary != nil {
+				// No need to recreate a canary destination if it already exists
+				continue
+			}
+			routeTables[i].Destinations[j].Canary =
+				r.newCanaryDestination(routeTables[i].Destinations[j].Stable, canaryName)
+			routeTables[i].Destinations[j].DestinationsParent.GetMulti().Destinations =
+				append(routeTables[i].Destinations[j].DestinationsParent.GetMulti().GetDestinations(), routeTables[i].Destinations[j].Canary)
+		}
+	}
+}
+
+func (r *RpcPlugin) newCanaryDestination(stableDst *v1.WeightedDestination, canaryName string) *v1.WeightedDestination {
+	ret := stableDst.Clone().(*v1.WeightedDestination)
+	ret.GetDestination().GetUpstream().Name = canaryName
+	ret.Weight = &wrapperspb.UInt32Value{Value: uint32(0)}
+	return ret
+}
+
+func (r *RpcPlugin) getDestinationsInRoutes(
+	routes []*gwv1.Route,
+	rollout *v1alpha1.Rollout,
+	pluginConfig *GlooEdgeTrafficRouting) (ret []destinationPair) {
+
+	for _, route := range routes {
+		if len(pluginConfig.Routes) > 0 && !slices.Contains(pluginConfig.Routes, route.GetName()) {
+			continue
+		}
+
+		if route.GetRouteAction() == nil ||
+			(route.GetRouteAction().GetMulti() == nil && route.GetRouteAction().GetSingle() == nil) {
+			continue
+		}
+
+		if route.GetRouteAction().GetSingle() != nil {
+			ret = append(ret, r.getDestinationInSingle(route, rollout)...)
+			continue
+		}
+
+		if route.GetRouteAction().GetMulti().GetDestinations() != nil {
+			ret = append(ret, r.getDestinationsInMulti(route, rollout)...)
+		}
 	}
 
-	// // HTTP Routes
-	// for _, httpRoute := range g.RouteTable.Spec.Http {
-	// 	// find the destination that matches the stable svc
-	// 	fw := httpRoute.GetForwardTo()
-	// 	if fw == nil {
-	// 		logCtx.Debugf("skipping route %s.%s because forwardTo is nil", g.RouteTable.Name, httpRoute.Name)
-	// 		continue
-	// 	}
+	return ret
+}
 
-	// 	// skip non-matching routes if RouteSelector provided
-	// 	if trafficConfig.RouteSelector != nil {
-	// 		// if name was provided, skip if route name doesn't match
-	// 		if !strings.EqualFold(trafficConfig.RouteSelector.Name, "") && !strings.EqualFold(trafficConfig.RouteSelector.Name, httpRoute.Name) {
-	// 			logCtx.Debugf("skipping route %s.%s because it doesn't match route name selector %s", g.RouteTable.Name, httpRoute.Name, trafficConfig.RouteSelector.Name)
-	// 			continue
-	// 		}
-	// 		// if labels provided, skip if route labels do not contain all specified labels
-	// 		if trafficConfig.RouteSelector.Labels != nil {
-	// 			matchedLabels := func() bool {
-	// 				for k, v := range trafficConfig.RouteSelector.Labels {
-	// 					if vv, ok := httpRoute.Labels[k]; ok {
-	// 						if !strings.EqualFold(v, vv) {
-	// 							logCtx.Debugf("skipping route %s.%s because route labels do not contain %s=%s", g.RouteTable.Name, httpRoute.Name, k, v)
-	// 							return false
-	// 						}
-	// 					}
-	// 				}
-	// 				return true
-	// 			}()
-	// 			if !matchedLabels {
-	// 				continue
-	// 			}
-	// 		}
-	// 		logCtx.Debugf("route %s.%s passed RouteSelector", g.RouteTable.Name, httpRoute.Name)
-	// 	}
+func (r *RpcPlugin) getDestinationsInMulti(route *gwv1.Route, rollout *v1alpha1.Rollout) (ret []destinationPair) {
+	var stable, canary *v1.WeightedDestination
+	for _, dst := range route.GetRouteAction().GetMulti().GetDestinations() {
+		if dst.GetDestination().GetUpstream() == nil ||
+			dst.GetDestination().GetUpstream().GetName() == "" {
+			continue
+		}
+		name := dst.GetDestination().GetUpstream().GetName()
+		if strings.EqualFold(getCanaryServiceName(rollout), name) {
+			canary = dst
+		} else if strings.EqualFold(getStableServiceName(rollout), name) {
+			stable = dst
+		}
+	}
+	if stable != nil {
+		ret = append(ret, destinationPair{DestinationsParent: route.GetRouteAction(), Stable: stable, Canary: canary})
+	}
 
-	// 	// find destinations
-	// 	// var matchedDestinations []*GlooDestinations
-	// 	var canary, stable *solov2.DestinationReference
-	// 	for _, dest := range fw.Destinations {
-	// 		ref := dest.GetRef()
-	// 		if ref == nil {
-	// 			logCtx.Debugf("skipping destination %s.%s because destination ref was nil; %+v", g.RouteTable.Name, httpRoute.Name, dest)
-	// 			continue
-	// 		}
-	// 		if strings.EqualFold(ref.Name, rollout.Spec.Strategy.Canary.StableService) {
-	// 			logCtx.Debugf("matched stable ref %s.%s.%s", g.RouteTable.Name, httpRoute.Name, ref.Name)
-	// 			stable = dest
-	// 			continue
-	// 		}
-	// 		if strings.EqualFold(ref.Name, rollout.Spec.Strategy.Canary.CanaryService) {
-	// 			logCtx.Debugf("matched canary ref %s.%s.%s", g.RouteTable.Name, httpRoute.Name, ref.Name)
-	// 			canary = dest
-	// 			// bail if we found both stable and canary
-	// 			if stable != nil {
-	// 				break
-	// 			}
-	// 			continue
-	// 		}
-	// 	}
+	return ret
+}
 
-	// 	if stable != nil {
-	// 		dest := &GlooMatchedHttpRoutes{
-	// 			HttpRoute: httpRoute,
-	// 			Destinations: &GlooDestinations{
-	// 				StableOrActiveDestination:  stable,
-	// 				CanaryOrPreviewDestination: canary,
-	// 			},
-	// 		}
-	// 		logCtx.Debugf("adding destination %+v", dest)
-	// 		g.HttpRoutes = append(g.HttpRoutes, dest)
-	// 	}
-	// } // end range httpRoutes
+// We will be converting `single` RouteAction to a `multi` one that will use WeightedDestinations created here
+func (r *RpcPlugin) getDestinationInSingle(route *gwv1.Route, rollout *v1alpha1.Rollout) (ret []destinationPair) {
+	var stable *v1.WeightedDestination
 
-	return nil
+	dst := route.GetRouteAction().GetSingle()
+	if dst.GetUpstream() == nil || dst.GetUpstream().GetName() == "" {
+		return ret
+	}
+
+	if strings.EqualFold(getStableServiceName(rollout), dst.GetUpstream().GetName()) {
+		stable = &v1.WeightedDestination{
+			Destination: dst,
+		}
+		ret = append(ret, destinationPair{DestinationsParent: route.GetRouteAction(), Stable: stable})
+	}
+
+	return ret
 }
