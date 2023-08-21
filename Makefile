@@ -3,7 +3,7 @@ DIST_DIR=${CURRENT_DIR}/dist
 
 .PHONY: release
 release:
-	rm ${DIST_DIR}/checksums.txt
+	rm ${DIST_DIR}/checksums.txt || true
 	make BIN_NAME=glooedge-plugin-darwin-amd64 GOOS=darwin glooedge-plugin-build
 	sha256sum dist/glooedge-plugin-darwin-amd64 >> dist/checksums.txt
 	make BIN_NAME=glooedge-plugin-darwin-arm64 GOOS=darwin GOARCH=arm64 glooedge-plugin-build
