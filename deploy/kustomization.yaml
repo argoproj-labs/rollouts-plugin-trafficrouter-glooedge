@@ -29,4 +29,4 @@ patchesJson6902:
         value:
           trafficRouterPlugins: |
             - name: "solo-io/glooedge"
-              location: "https://github.com/dmitri-d/rollouts-plugin-trafficrouter-glooedge/releases/download/v0.0.1-alpha1/glooedge-plugin-linux-amd64"
+              location: "https://github.com/argoproj-labs/rollouts-plugin-trafficrouter-glooedge/releases/download/v0.1.0-beta1/glooedge-plugin-linux-amd64"
