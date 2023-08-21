@@ -653,7 +653,6 @@ func (s *VirtualServiceCanarySuite) Test_handleCanary_ReturnErrorIfGetVirtualSer
 			},
 		},
 		42,
-		[]v1alpha1.WeightDestination{},
 		&GlooEdgeTrafficRouting{
 			VirtualServiceSelector: &DumbObjectSelector{
 				Namespace: "testns", Name: "testvs",
@@ -686,7 +685,6 @@ func (s *VirtualServiceCanarySuite) Test_handleCanary_ReturnErrorIfGetDestionati
 			},
 		},
 		42,
-		[]v1alpha1.WeightDestination{},
 		&GlooEdgeTrafficRouting{
 			VirtualServiceSelector: &DumbObjectSelector{
 				Namespace: "testns", Name: "testvs",

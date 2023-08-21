@@ -14,7 +14,6 @@ func (r *RpcPlugin) handleCanaryUsingVirtualService(
 	ctx context.Context,
 	rollout *v1alpha1.Rollout,
 	desiredWeight int32,
-	additionalDestinations []v1alpha1.WeightDestination,
 	pluginConfig *GlooEdgeTrafficRouting) error {
 
 	vs, err := r.getVirtualService(ctx, rollout, pluginConfig)

@@ -54,7 +54,7 @@ spec:
             weight: 100
 ```
 
-Note that only `multi` routeActions are supported. It's ok to define a destination for a stable release only. The names for stable and canary `Upstream`s are expected to match the name of the services (and `stableService` and `canaryService` fields of the plugin configuration).
+Both `multi` and `single` routeActions are supported. It's ok to define a destination for a stable release only. The names for stable and canary `Upstream`s are expected to match the name of the services (and `stableService` and `canaryService` fields of the plugin configuration).
 
 A complete example of a VirtualService-based canary rollout can be found in examples/canaries-with-vs.
 
@@ -87,6 +87,6 @@ Everything under `plugins:solo-io/glooedge` is a configuration for the Gloo Edge
 
 If there are multiple routes present in the VirtualHost of a VirtualService, the routes where weights will need to be updated during the rollout must be listed under `routes`. Otherwise this setting is optional. All routes listed under `routes` must exist.
 
-Just like with VirtualService-based rollouts, only `multi` RouteActions are supported.
+Just like with VirtualService-based rollouts, both `multi` and `single` RouteActions are supported.
 
 Complete examples of RouteTable-based canary rollouts can be found in examples/canaries-with-single-routetable/ examples/canaries-with-multiple-routetables/ directories.

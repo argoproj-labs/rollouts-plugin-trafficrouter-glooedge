@@ -100,9 +100,9 @@ func (r *RpcPlugin) SetWeight(
 	}
 
 	if glooPluginConfig.VirtualServiceSelector != nil {
-		err = r.handleCanaryUsingVirtualService(ctx, rollout, desiredWeight, additionalDestinations, glooPluginConfig)
+		err = r.handleCanaryUsingVirtualService(ctx, rollout, desiredWeight, glooPluginConfig)
 	} else {
-		err = r.handleCanaryUsingRouteTables(ctx, rollout, desiredWeight, additionalDestinations, glooPluginConfig)
+		err = r.handleCanaryUsingRouteTables(ctx, rollout, desiredWeight, glooPluginConfig)
 	}
 
 	if err != nil {

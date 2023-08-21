@@ -365,7 +365,6 @@ func (s *RouteTableCanarySuite) Test_handleCanaryUsingRouteTables_ReturnErrorIfG
 			},
 		},
 		42,
-		[]v1alpha1.WeightDestination{},
 		&GlooEdgeTrafficRouting{
 			RouteTableSelector: &DumbObjectSelector{
 				Namespace: "testns", Name: "testvs",
@@ -397,7 +396,6 @@ func (s *RouteTableCanarySuite) Test_handleCanaryUsingRouteTables_ReturnErrorIfG
 			},
 		},
 		42,
-		[]v1alpha1.WeightDestination{},
 		&GlooEdgeTrafficRouting{
 			RouteTableSelector: &DumbObjectSelector{
 				Namespace: "testns", Name: "testvs",
